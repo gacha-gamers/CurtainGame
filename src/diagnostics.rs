@@ -16,7 +16,7 @@ use crate::bullet::Bullet;
 
 const FONT_SIZE: f32 = 32.0;
 const FONT_COLOR: Color = Color::GOLD;
-const UPDATE_INTERVAL: Duration = Duration::from_secs(1);
+const UPDATE_INTERVAL: Duration = Duration::from_millis(1000);
 
 const STRING_FORMAT: &str = "FPS: ";
 const STRING_INITIAL: &str = "FPS: ...";
@@ -99,7 +99,7 @@ fn update(
                 for mut text in bullet_text_query.iter_mut() {
                     let value = &mut text.sections[0].value;
                     value.clear();
-                
+
                     write!(value, "{}{:.0}", "Bullets: ", bullet_query.iter().len()).unwrap();
                 }
             }
@@ -115,6 +115,11 @@ fn extract_fps(diagnostics: &Res<Diagnostics>) -> Option<f64> {
 
 fn spawn_text(mut commands: Commands, asset_server: Res<AssetServer>) {
     let font = asset_server.load("fonts/screen-diags-font.ttf");
+    let text_style = Style {
+        margin: UiRect::top(Val::Px(30.)),
+        ..Default::default()
+    };
+
     commands.spawn((
         TextBundle {
             text: Text {
@@ -128,6 +133,8 @@ fn spawn_text(mut commands: Commands, asset_server: Res<AssetServer>) {
                 }],
                 ..Default::default()
             },
+            style: text_style.clone(),
+            // transform: Transform::from_xyz(0., 100., 0.),
             ..Default::default()
         },
         ScreenDiagsText,
@@ -146,7 +153,7 @@ fn spawn_text(mut commands: Commands, asset_server: Res<AssetServer>) {
                 }],
                 ..Default::default()
             },
-            // transform: Transform::from_xyz(0., 100., 0.),
+            style: text_style.clone(),
             ..Default::default()
         },
         BulletCountText,

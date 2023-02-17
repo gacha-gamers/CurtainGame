@@ -1,3 +1,4 @@
+use crate::editor::is_ui_unfocused;
 use bevy::prelude::*;
 
 #[derive(Component)]
@@ -7,7 +8,7 @@ pub struct PlayerPlugin;
 
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
-        app.add_system(player_controls);
+        app.add_system(player_controls.with_run_criteria(is_ui_unfocused));
     }
 }
 

@@ -8,10 +8,14 @@ edition = "2021"
 [dependencies]
 bevy = { version = "0.9", features = ["dynamic"] }
 bytemuck = "1.13.0"
+bevy_mouse_tracking_plugin = "0.5.3"
+bevy_egui = "0.19.0"
+egui_node_graph = { git = "https://github.com/a-soulspark/egui_node_graph" }
+anyhow = "1.0.69"
 
 # Enable a small amount of optimization in debug mode
 [profile.dev]
-opt-level = 1
+opt-level = 3
 
 # Enable high optimizations for dependencies (incl. Bevy), but not for our code:
 [profile.dev.package."*"]
