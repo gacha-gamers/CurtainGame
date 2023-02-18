@@ -6,7 +6,7 @@ use bevy::prelude::*;
 
 use crate::{editor::is_ui_unfocused, player::Player};
 
-use self::modifiers::{AngularVelocity, BulletModifiersPlugin};
+use self::modifiers::{Aimed, AngularVelocity, BulletModifiersPlugin, Delayed};
 
 pub struct BulletPlugin;
 
@@ -15,8 +15,8 @@ impl Plugin for BulletPlugin {
         app.add_plugin(BulletModifiersPlugin)
             .add_system(move_bullets)
             .add_system(collide_bullets)
-            .add_system(transform_bullets)
-            .add_system(spawn_bullets.with_run_criteria(is_ui_unfocused));
+            .add_system(spawn_bullets.with_run_criteria(is_ui_unfocused))
+            .add_system(transform_bullets.after(spawn_bullets));
     }
 }
 
@@ -25,56 +25,93 @@ pub struct Bullet {
     position: Vec2,
     rotation: f32,
     speed: f32,
-    angular_velocity: f32,
+}
+
+impl Bullet {
+    pub fn new(speed: f32) -> Self {
+        Self {
+            speed,
+            ..Default::default()
+        }
+    }
 }
 
 fn spawn_bullets(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
+    player_query: Query<&Transform, With<Player>>,
     input: Res<Input<KeyCode>>,
 ) {
     if !input.just_pressed(KeyCode::E) {
         return;
     }
 
+    let player = player_query.single();
     let texture = asset_server.load("SA_bullet.png");
-/* 
-    let pattern = Pattern::new()
-        .ring(8, 1.)
-        .fire(commands, radial_bullets(0., texture.clone(), ()));
- */
-    
-    let count = 10 - 000;
-    commands.spawn_batch((0..count).map(move |i| {
-        radial_bullets(
-            i as f32 / count as f32,
-            texture.clone(),
-            AngularVelocity { amount: 0.5 },
-        )
-    }));
+
+    Pattern::new(Bullet::new(60.0))
+        .aimed(player.translation)
+        .arc(8, 45.)
+        // .add_modifier(AngularVelocity::new(0.5))
+        .fire(&mut commands, &texture, ()/* AngularVelocity::new(0.5) */);
+
+    Pattern::new(Bullet::new(40.)).ring(32, 0.).fire(
+        &mut commands,
+        &texture,
+        AngularVelocity::new(0.5),
+    );
+
+    Pattern::new(Bullet::new(40.)).ring(32, 0.).fire(
+        &mut commands,
+        &texture,
+        Delayed::<Aimed> {
+            wait: 1.,
+            component: Aimed,
+        },
+    );
 }
-/* 
+
 struct Pattern {
     bullets: Vec<Bullet>,
 }
 
 impl Pattern {
-    fn new() -> Self {
+    fn new(bullet: Bullet) -> Self {
         Self {
-            bullets: vec![Bullet {
-                speed: 1.,
-                ..Default::default()
-            }],
+            bullets: vec![bullet],
         }
     }
+/* 
+    fn add_modifier(mut self, modifier: impl Modifier) -> Self {
+        self.modifiers.push(Box::new(modifier));
+        self
+    }
+ */
+    fn ring(mut self, count: u32, radius: f32) -> Self {
+        self.bullets = self
+            .bullets
+            .iter_mut()
+            .flat_map(|b| {
+                (0..count).map(|i| {
+                    let rotation = b.rotation + i as f32 / count as f32 * 2. * PI;
+                    Bullet {
+                        position: b.position + Vec2::from_angle(rotation) * radius,
+                        rotation,
+                        ..*b
+                    }
+                })
+            })
+            .collect();
+        self
+    }
 
-    fn ring(&mut self, count: u32, radius: f32) -> &mut Self {
+    fn line(mut self, count: u32, delta_speed: f32) -> Self {
         self.bullets = self
             .bullets
             .iter_mut()
             .flat_map(|b| {
                 (0..count).map(|i| Bullet {
-                    rotation: i as f32 / count as f32 * 2. * PI,
+                    speed: b.speed + delta_speed * i as f32,
                     ..*b
                 })
             })
@@ -82,27 +119,55 @@ impl Pattern {
         self
     }
 
-    fn fire<T: Bundle>(&self, mut commands: Commands, bundle: T) {
-        commands.spawn_batch(self.bullets.iter().map(|b| (bundle, *b)));
+    fn arc(mut self, count: u32, angle: f32) -> Self {
+        let step = angle / (count as f32 - 1.0);
+        self.bullets = self
+            .bullets
+            .iter_mut()
+            .flat_map(|b| {
+                (0..count).map(|i| Bullet {
+                    rotation: b.rotation - angle / 2.0 + step * i as f32,
+                    ..*b
+                })
+            })
+            .collect();
+        self
     }
-} */
 
-fn radial_bullets(percent: f32, texture: Handle<Image>, bundle: impl Bundle) -> impl Bundle {
-    let angle = percent * 2. * PI;
-    (
-        SpriteBundle {
-            texture,
-            ..Default::default()
-        },
-        Bullet {
-            // velocity: Vec2::from_angle(angle) * 0.2,
-            position: Vec2::ZERO,
-            rotation: angle,
-            speed: 0.2,
-            angular_velocity: 0.,
-        },
-        bundle,
-    )
+    fn aimed(mut self, translation: Vec3) -> Self {
+        self.bullets = self
+            .bullets
+            .iter_mut()
+            .map(|b| {
+                let offset = translation - b.position.extend(0.);
+                Bullet {
+                    rotation: offset.y.atan2(offset.x) + PI,
+                    ..*b
+                }
+            })
+            .collect();
+        self
+    }
+
+    fn fire(
+        self,
+        commands: &mut Commands,
+        texture: &Handle<Image>,
+        modifiers_bundle: impl Bundle + Copy,
+    ) {
+        let bullets = self.bullets;
+        for bullet_comp in bullets.into_iter() {
+            commands.spawn((
+                SpriteBundle {
+                    texture: texture.clone(),
+                    transform: calculate_transform(&bullet_comp),
+                    ..Default::default()
+                },
+                modifiers_bundle,
+                bullet_comp,
+            ));
+        }
+    }
 }
 
 fn collide_bullets(
@@ -124,25 +189,30 @@ fn collide_bullets(
 
 fn transform_bullets(mut bullet_query: Query<(&mut Transform, &Bullet)>) {
     for (mut tr, bullet) in bullet_query.iter_mut() {
-        *tr = Transform {
-            translation: Vec3 {
-                x: bullet.position.x,
-                y: bullet.position.y,
-                z: 0.,
-            },
-            rotation: Quat::from_rotation_z(bullet.rotation - PI / 2.),
-            ..Default::default()
-        };
+        *tr = calculate_transform(bullet);
+    }
+}
+
+fn calculate_transform(bullet: &Bullet) -> Transform {
+    Transform {
+        translation: Vec3 {
+            x: bullet.position.x,
+            y: bullet.position.y,
+            z: 0.,
+        },
+        rotation: Quat::from_rotation_z(bullet.rotation - PI / 2.),
+        ..Default::default()
     }
 }
 
 fn move_bullets(mut bullet_query: Query<&mut Bullet>, time: Res<Time>) {
     for mut bullet in bullet_query.iter_mut() {
-        let rotation = bullet.rotation + bullet.angular_velocity * time.delta_seconds();
-        let speed = bullet.speed;
-
-        bullet.rotation = rotation;
-        bullet.position += Vec2::from_angle(rotation) * speed;
+        let Bullet {
+            position,
+            rotation,
+            speed,
+        } = bullet.as_mut();
+        *position += Vec2::from_angle(*rotation) * *speed * time.delta_seconds();
     }
 }
 
