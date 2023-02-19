@@ -11,7 +11,7 @@ use bevy::{
 use fasteval::*;
 use serde_json::Value;
 
-use super::Bullet;
+use super::{Bullet, BulletContainer};
 
 #[derive(Default)]
 pub struct PatternLoader;
@@ -91,6 +91,7 @@ impl ParsedPattern {
     pub fn fire(
         &self,
         commands: &mut Commands,
+        mut bullet_container: ResMut<BulletContainer>,
         texture: &Handle<Image>,
         modifiers_bundle: impl Bundle + Copy,
     ) {
@@ -117,6 +118,8 @@ impl ParsedPattern {
                                 ..bullet_comp.clone()
                             }
                         ));
+
+                        // bullet_container.add_bullet()
                     }
                     bullets
                 }

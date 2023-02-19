@@ -1,2 +1,8 @@
 /target
-/profiling
+
+# Ignore everything in profiling except for the Read Me
+/profiling/*
+!/profiling/readme.md
+
+# Ignore potential flamegraph.svg files in the root directory
+/*.svg

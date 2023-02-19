@@ -1,16 +1,18 @@
 mod modifiers;
 mod pattern;
+mod render;
 
 use std::{f32::consts::PI, path::Path, sync::Arc};
 
-use bevy::prelude::*;
+use bevy::{ecs::query::QueryItem, prelude::*, render::extract_component::ExtractComponent};
 use fasteval::{Slab, StrToF64Namespace};
+use itertools::{izip, multizip};
 
 use crate::{editor::is_ui_unfocused, player::Player};
 
 use self::{
     modifiers::*,
-    pattern::{parse_string, ExpressionSlab, ParsedPattern, ParsedPatterns, PatternLoader},
+    pattern::{parse_string, ExpressionSlab, ParsedPattern, ParsedPatterns, PatternLoader}, render::BulletRenderPlugin,
 };
 
 pub struct BulletPlugin;
@@ -19,10 +21,13 @@ impl Plugin for BulletPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugin(BulletModifiersPlugin)
             .init_resource::<ParsedPatterns>()
+            .add_plugin(BulletRenderPlugin)
             .add_asset::<ParsedPattern>()
             .init_asset_loader::<PatternLoader>()
             .add_startup_system(load_patterns)
+            .init_resource::<BulletContainer>()
             .add_system(move_bullets)
+            .add_system(tick_bullets)
             .add_system(collide_bullets)
             .add_system(spawn_bullets.with_run_criteria(is_ui_unfocused))
             .add_system(transform_bullets.after(spawn_bullets));
@@ -83,6 +88,7 @@ fn load_patterns(
 
 fn spawn_bullets(
     mut commands: Commands,
+    mut bullet_container: ResMut<BulletContainer>,
     asset_server: Res<AssetServer>,
     patterns: ResMut<Assets<ParsedPattern>>,
     input: Res<Input<KeyCode>>,
@@ -99,7 +105,7 @@ fn spawn_bullets(
 
     let pattern = patterns.get(&handle.clone());
     if let Some(pattern) = pattern {
-        pattern.fire(&mut commands, &texture, ());
+        pattern.fire(&mut commands, bullet_container, &texture, ());
     }
 }
 
@@ -148,26 +154,63 @@ fn move_bullets(mut bullet_query: Query<&mut Bullet>, time: Res<Time>) {
             rotation,
             speed,
             lifetime,
-            angular_velocity
+            angular_velocity,
         } = bullet.as_mut();
-        
+
         *lifetime += time.delta_seconds();
         namespace.insert("t", *lifetime as f64);
         *rotation += angular_velocity.eval(&mut namespace) as f32 * time.delta_seconds();
-        *position += Vec2::from_angle(*rotation)
-            * speed.eval(&mut namespace) as f32
-            * time.delta_seconds();
+        *position +=
+            Vec2::from_angle(*rotation) * speed.eval(&mut namespace) as f32 * time.delta_seconds();
     }
 }
 
-/*
-impl BulletContainer {
-    pub fn process_velocities(&mut self) {
-        for (position, velocity) in self.positions.iter_mut().zip(self.velocities.iter()) {
-            *position += *velocity;
+#[derive(Resource, Clone)]
+pub struct BulletContainer {
+    lifetimes: Vec<f32>,
+    positions: Vec<Vec2>,
+    rotations: Vec<f32>,
+    speeds: Vec<f32>,
+    angulars: Vec<f32>,
+}
+
+impl Default for BulletContainer {
+    fn default() -> Self {
+        const CAPACITY: usize = 100000;
+        
+        Self {
+            lifetimes: Vec::with_capacity(CAPACITY),
+            positions: Vec::with_capacity(CAPACITY),
+            rotations: Vec::with_capacity(CAPACITY),
+            speeds: Vec::with_capacity(CAPACITY),
+            angulars: Vec::with_capacity(CAPACITY),
         }
     }
+}
 
+fn tick_bullets(container: ResMut<BulletContainer>, time: Res<Time>) {
+    let BulletContainer { mut lifetimes, mut positions, mut rotations, speeds, angulars } = container.to_owned();
+    let time = time.delta_seconds();
+
+    for (lifetime, position, rotation, speed, angular) in multizip((
+        &mut lifetimes,
+        &mut positions,
+        &mut rotations,
+        &speeds,
+        &angulars,
+    )) {
+        *lifetime += time;
+        *position += Vec2::from_angle(*rotation) * *speed * time;
+        *rotation += *angular * time;
+    }
+    /*         for (position, velocity) in self.positions.iter_mut().zip .zip(self.speeds.iter()) {
+        *position += *velocity;
+    } */
+}
+
+impl BulletContainer {
+    
+    /*
     pub fn add_from_loop<F>(&mut self, count: u32, callback: F)
     where
         F: Fn(f32) -> (Vec3, Vec3),
@@ -177,8 +220,8 @@ impl BulletContainer {
             .unzip();
         self.positions.extend(positions.iter());
         self.velocities.extend(velocities.iter());
-    }
-
+    } */
+    /*
     pub fn from_loop<F>(count: u32, callback: F) -> Self
     where
         F: Fn(f32) -> (Vec3, Vec3),
@@ -186,15 +229,5 @@ impl BulletContainer {
         let mut inst = Self::default();
         inst.add_from_loop(count, callback);
         inst
-    }
+    } */
 }
-
-impl ExtractComponent for BulletContainer {
-    type Query = &'static BulletContainer;
-    type Filter = ();
-
-    fn extract_component(item: QueryItem<'_, Self::Query>) -> Self {
-        item.clone()
-    }
-}
- */
