@@ -10,11 +10,11 @@ impl Plugin for BulletModifiersPlugin {
     fn build(&self, app: &mut App) {
         app.add_system(angular_velocity_system)
             .add_system(aimed_system)
-            .add_system(delayed_system::<AngularVelocity>)
+            // .add_system(delayed_system::<AngularVelocity>)
             .add_system(acceleration_system);
     }
 }
-
+/* 
 fn delayed_system<T: Component>(
     mut commands: Commands,
     mut bullet_query: Query<(Entity, &mut Delayed<T>)>,
@@ -27,7 +27,7 @@ fn delayed_system<T: Component>(
             //commands.entity(entity).insert(delayed.component);
         }
     }
-}
+} */
 
 fn angular_velocity_system(
     mut bullet_query: Query<(&mut Bullet, &AngularVelocity)>,
@@ -51,12 +51,12 @@ fn aimed_system(
     }
 
 }
-
+/* 
 #[derive(Component, Clone, Copy)]
 pub struct Delayed<T: Component> {
     pub wait: f32,
     pub component: T
-}
+} */
 
 #[derive(Component, Clone, Copy)]
 pub struct Aimed;

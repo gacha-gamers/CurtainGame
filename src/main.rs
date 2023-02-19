@@ -2,13 +2,10 @@
 
 mod bullet;
 mod diagnostics;
-mod player;
 mod editor;
+mod player;
 
-use bevy::{
-    diagnostic::LogDiagnosticsPlugin,
-    prelude::*,
-};
+use bevy::{diagnostic::LogDiagnosticsPlugin, prelude::*};
 
 use bevy_egui::EguiPlugin;
 use bevy_mouse_tracking_plugin::{
@@ -25,7 +22,15 @@ use player::PlayerPlugin;
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins)
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
+            window: WindowDescriptor {
+                width: 960.,
+                height: 540.,
+                position: WindowPosition::At(Vec2::new(240., 0.)),
+                ..Default::default()
+            },
+            ..Default::default()
+        }))
         .add_plugin(EguiPlugin)
         .add_plugin(LogDiagnosticsPlugin::default())
         .add_plugin(ScreenDiagsPlugin)

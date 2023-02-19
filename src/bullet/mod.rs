@@ -1,18 +1,26 @@
 mod modifiers;
+mod pattern;
 
-use std::f32::consts::PI;
+use std::{f32::consts::PI, path::Path};
 
 use bevy::prelude::*;
 
 use crate::{editor::is_ui_unfocused, player::Player};
 
-use self::modifiers::{Aimed, AngularVelocity, BulletModifiersPlugin, Delayed};
+use self::{
+    modifiers::*,
+    pattern::{ParsedPattern, ParsedPatterns, PatternLoader},
+};
 
 pub struct BulletPlugin;
 
 impl Plugin for BulletPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugin(BulletModifiersPlugin)
+            .init_resource::<ParsedPatterns>()
+            .add_asset::<ParsedPattern>()
+            .init_asset_loader::<PatternLoader>()
+            .add_startup_system(load_patterns)
             .add_system(move_bullets)
             .add_system(collide_bullets)
             .add_system(spawn_bullets.with_run_criteria(is_ui_unfocused))
@@ -20,11 +28,12 @@ impl Plugin for BulletPlugin {
     }
 }
 
-#[derive(Component, Default)]
+#[derive(Component, Default, Debug, Clone)]
 pub struct Bullet {
     position: Vec2,
     rotation: f32,
     speed: f32,
+    lifetime: f32,
 }
 
 impl Bullet {
@@ -36,24 +45,54 @@ impl Bullet {
     }
 }
 
+fn load_patterns(
+    asset_server: Res<AssetServer>,
+    // pattern_assets: ResMut<Assets<ParsedPattern>>,
+    mut patterns: ResMut<ParsedPatterns>,
+) {
+    let scripts_iter = asset_server
+        .asset_io()
+        .read_directory(Path::new("./scripts"))
+        .expect("/assets/scripts/ directory doesn't exist.");
+
+    for path in scripts_iter {
+        let handle = asset_server.load(path);
+        patterns.0.push(handle);
+    }
+}
+
 fn spawn_bullets(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
-    player_query: Query<&Transform, With<Player>>,
+    patterns: ResMut<Assets<ParsedPattern>>,
     input: Res<Input<KeyCode>>,
+    // player_query: Query<&Transform, With<Player>>,
 ) {
     if !input.just_pressed(KeyCode::E) {
         return;
     }
 
-    let player = player_query.single();
+    // let player = player_query.single();
     let texture = asset_server.load("SA_bullet.png");
 
+    let handle = asset_server.load("scripts/pattern1.json.pattern");
+
+    let pattern = patterns.get(&handle.clone());
+    if let Some(pattern) = pattern {
+        pattern.fire(&mut commands, &texture, ());
+    }
+
+    //let parsed_pattern = pattern::parse("");
+    /*
     Pattern::new(Bullet::new(60.0))
         .aimed(player.translation)
         .arc(8, 45.)
         // .add_modifier(AngularVelocity::new(0.5))
-        .fire(&mut commands, &texture, ()/* AngularVelocity::new(0.5) */);
+        .fire(
+            &mut commands,
+            &texture,
+            (), /* AngularVelocity::new(0.5) */
+        );
 
     Pattern::new(Bullet::new(40.)).ring(32, 0.).fire(
         &mut commands,
@@ -68,26 +107,37 @@ fn spawn_bullets(
             wait: 1.,
             component: Aimed,
         },
-    );
+    ); */
 }
 
-struct Pattern {
+/* struct Pattern {
     bullets: Vec<Bullet>,
 }
 
+impl Default for Pattern {
+    fn default() -> Self {
+        Self {
+            bullets: vec![Bullet {
+                speed: 1.,
+                ..Default::default()
+            }],
+        }
+    }
+}
+
 impl Pattern {
-    fn new(bullet: Bullet) -> Self {
+    /* fn new(bullet: Bullet) -> Self {
         Self {
             bullets: vec![bullet],
         }
-    }
-/* 
-    fn add_modifier(mut self, modifier: impl Modifier) -> Self {
-        self.modifiers.push(Box::new(modifier));
-        self
-    }
- */
-    fn ring(mut self, count: u32, radius: f32) -> Self {
+    } */
+    /*
+       fn add_modifier(mut self, modifier: impl Modifier) -> Self {
+           self.modifiers.push(Box::new(modifier));
+           self
+       }
+    */
+    /* fn ring(mut self, count: u32, radius: f32) -> Self {
         self.bullets = self
             .bullets
             .iter_mut()
@@ -103,8 +153,9 @@ impl Pattern {
             })
             .collect();
         self
-    }
+    } */
 
+    #[allow(dead_code)]
     fn line(mut self, count: u32, delta_speed: f32) -> Self {
         self.bullets = self
             .bullets
@@ -168,7 +219,7 @@ impl Pattern {
             ));
         }
     }
-}
+} */
 
 fn collide_bullets(
     player_query: Query<&Transform, (With<Player>, Without<Bullet>)>,
@@ -211,8 +262,10 @@ fn move_bullets(mut bullet_query: Query<&mut Bullet>, time: Res<Time>) {
             position,
             rotation,
             speed,
+            lifetime
         } = bullet.as_mut();
         *position += Vec2::from_angle(*rotation) * *speed * time.delta_seconds();
+        *lifetime += time.delta_seconds();
     }
 }
 

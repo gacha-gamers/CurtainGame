@@ -1,0 +1,25 @@
+{
+    "type": "bullet",
+    "id": "rice_pellet01",
+    "speed": 5,
+    "then": {
+        "type": "arc",
+        "count": 5,
+        "angle": 30,
+        "then": {
+            "type": "ring",
+            "count": 8,
+            "radius": "$ring_radius",
+            "params": {
+                "ring_radius": "sin(t)"
+            }
+        }
+    },
+    "_comment": [
+        "This is a bad alternative:",
+        "Understanding the scopes of params with this structure is very unwieldy.",
+        "For example, could you tell what is the scope of $ring_radius?",
+        "Probably not: the scope is the whole pattern,",
+        "because it's created in the most nested pattern element (the ring)"
+    ]
+}
