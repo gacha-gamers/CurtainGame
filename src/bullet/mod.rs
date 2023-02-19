@@ -34,21 +34,15 @@ pub struct Bullet {
     lifetime: f32,
     position: Vec2,
     rotation: f32,
-    angular_velocity: Arc<ExpressionSlab>,
-    speed: Arc<ExpressionSlab>,
+    angular_velocity: f32,
+    speed: f32,
 }
 
 impl Default for Bullet {
     fn default() -> Self {
         Self {
-            speed: Arc::new(ExpressionSlab::new(
-                fasteval::Instruction::IConst(0.),
-                Slab::default(),
-            )),
-            angular_velocity: Arc::new(ExpressionSlab::new(
-                fasteval::Instruction::IConst(0.),
-                Slab::default(),
-            )),
+            speed: 1.,
+            angular_velocity: 0.,
             position: Vec2::default(),
             lifetime: f32::default(),
             rotation: f32::default(),
@@ -59,7 +53,7 @@ impl Default for Bullet {
 impl Bullet {
     pub fn new(speed: f32) -> Self {
         Self {
-            speed: Arc::new(parse_string(speed.to_string().as_str())),
+            speed,
             ..Default::default()
         }
     }
@@ -139,24 +133,18 @@ fn calculate_transform(bullet: &Bullet) -> Transform {
 }
 
 fn move_bullets(mut bullet_query: Query<&mut Bullet>, time: Res<Time>) {
-    let mut namespace = StrToF64Namespace::new();
-    namespace.insert("t", 0.);
-
     for mut bullet in bullet_query.iter_mut() {
         let Bullet {
             position,
             rotation,
             speed,
             lifetime,
-            angular_velocity
+            angular_velocity,
         } = bullet.as_mut();
-        
+
         *lifetime += time.delta_seconds();
-        namespace.insert("t", *lifetime as f64);
-        *rotation += angular_velocity.eval(&mut namespace) as f32 * time.delta_seconds();
-        *position += Vec2::from_angle(*rotation)
-            * speed.eval(&mut namespace) as f32
-            * time.delta_seconds();
+        *rotation += *angular_velocity * time.delta_seconds();
+        *position += Vec2::from_angle(*rotation) * *speed * time.delta_seconds();
     }
 }
 

@@ -11,6 +11,7 @@ use bevy::{
 use fasteval::*;
 use serde_json::Value;
 
+use super::modifiers::{BulletModifier, ModifierTarget};
 use super::Bullet;
 
 #[derive(Default)]
@@ -57,7 +58,7 @@ impl ParsedPattern {
             })
             .collect()
     }
-/* 
+    /*
     #[allow(dead_code)]
     fn line(bullets: Vec<Bullet>, count: u32, delta_speed: f32) -> Vec<Bullet> {
         bullets
@@ -102,9 +103,11 @@ impl ParsedPattern {
                     ParsedPattern::ring(bullets, count.eval(&mut EmptyNamespace) as u32, *radius)
                 }
                 PatternOp::Arc(count, angle) => ParsedPattern::arc(bullets, *count, *angle),
-                PatternOp::Bullet(bullet) => {
+                PatternOp::Bullet(bullet, speed_modifier, angular_modifier) => {
+                    let mut bullet_entities = vec![];
+
                     for bullet_comp in bullets.iter() {
-                        commands.spawn((
+                        bullet_entities.push(commands.spawn((
                             SpriteBundle {
                                 texture: texture.clone(),
                                 transform: super::calculate_transform(&bullet_comp),
@@ -115,9 +118,13 @@ impl ParsedPattern {
                                 speed: bullet.speed.clone(),
                                 angular_velocity: bullet.angular_velocity.clone(),
                                 ..bullet_comp.clone()
-                            }
-                        ));
+                            },
+                        )).id());
                     }
+                    
+                    commands.spawn(speed_modifier.clone_with_bullets(bullet_entities.clone()));
+                    commands.spawn(angular_modifier.clone_with_bullets(bullet_entities.clone()));
+
                     bullets
                 }
             }
@@ -132,7 +139,7 @@ pub struct ParsedPatterns(pub Vec<Handle<ParsedPattern>>);
 pub enum PatternOp {
     Ring(Box<ExpressionSlab>, f32),
     Arc(u32, f32 /* fasteval::Expression */),
-    Bullet(Bullet),
+    Bullet(Bullet, BulletModifier, BulletModifier),
 }
 
 pub fn parse(source: &str) -> ParsedPattern {
@@ -158,11 +165,26 @@ pub fn parse(source: &str) -> ParsedPattern {
                     value["count"].as_u64().expect("No count provided.") as u32,
                     (value["angle"].as_f64().expect("No angle provided.") as f32).to_radians(),
                 ),
-                "bullet" => PatternOp::Bullet(Bullet {
-                    speed: Arc::new(parse_expression(&value, "speed")),
-                    angular_velocity: Arc::new(parse_expression(&value, "angular_velocity")),
-                    ..Default::default()
-                }),
+                "bullet" => {
+                    let speed_exp = Arc::new(parse_expression(&value, "speed"));
+                    let angular_velocity = Arc::new(parse_expression(&value, "angular_velocity"));
+                    PatternOp::Bullet(
+                        Bullet {
+                            speed: 1.,
+                            ..Default::default()
+                        },
+                        BulletModifier {
+                            bullets: vec![],
+                            expression_slab: speed_exp,
+                            target: ModifierTarget::Speed,
+                        },
+                        BulletModifier {
+                            bullets: vec![],
+                            expression_slab: angular_velocity,
+                            target: ModifierTarget::AngularVelocity,
+                        },
+                    )
+                }
                 _ => {
                     panic!("Invalid type in pattern.");
                 }
@@ -178,7 +200,7 @@ pub fn parse(source: &str) -> ParsedPattern {
 fn parse_expression(value: &Value, key: &str) -> ExpressionSlab {
     let binding = value[key].to_string();
     let expression = binding.trim_matches('\"');
-    
+
     parse_string(expression)
 }
 
@@ -196,8 +218,8 @@ pub(crate) fn parse_string(string: &str) -> ExpressionSlab {
 
 #[derive(Debug)]
 pub struct ExpressionSlab {
-    expression: Instruction,
-    slab: Slab,
+    pub expression: Instruction,
+    pub slab: Slab,
 }
 
 impl ExpressionSlab {
@@ -211,11 +233,7 @@ impl ExpressionSlab {
 
     fn try_eval(&self, data: &mut impl EvalNamespace) -> Result<f32, fasteval::Error> {
         // let mut ns = &mut StrToF64Namespace::from([("t", 0.5)]);
-        
-        Ok(fasteval::eval_compiled_ref!(
-            &self.expression,
-            &self.slab,
-            &mut *data
-        ) as f32)
+
+        Ok(fasteval::eval_compiled_ref!(&self.expression, &self.slab, &mut *data) as f32)
     }
 }
