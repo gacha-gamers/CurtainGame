@@ -9,9 +9,9 @@ pub struct BulletModifiersPlugin;
 impl Plugin for BulletModifiersPlugin {
     fn build(&self, app: &mut App) {
         app.add_system(angular_velocity_system)
-            .add_system(aimed_system)
+            .add_system(aimed_system);
             // .add_system(delayed_system::<AngularVelocity>)
-            .add_system(acceleration_system);
+            // .add_system(acceleration_system);
     }
 }
 /* 
@@ -71,14 +71,14 @@ impl AngularVelocity {
         Self { amount }
     }
 }
-
+/* 
 fn acceleration_system(mut bullet_query: Query<(&mut Bullet, &Acceleration)>, time: Res<Time>) {
     let delta_seconds = time.delta_seconds();
     for (mut bullet, acceleration_mod) in bullet_query.iter_mut() {
         bullet.speed += acceleration_mod.amount * delta_seconds;
     }
 }
-
+ */
 #[derive(Component)]
 pub struct Acceleration {
     pub amount: f32,

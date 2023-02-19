@@ -1,5 +1,6 @@
 use std::f32::consts::PI;
 use std::str::from_utf8;
+use std::sync::Arc;
 
 use bevy::prelude::*;
 use bevy::{
@@ -50,13 +51,13 @@ impl ParsedPattern {
                     Bullet {
                         position: b.position + Vec2::from_angle(rotation) * radius,
                         rotation,
-                        ..*b
+                        ..b.clone()
                     }
                 })
             })
             .collect()
     }
-
+/* 
     #[allow(dead_code)]
     fn line(bullets: Vec<Bullet>, count: u32, delta_speed: f32) -> Vec<Bullet> {
         bullets
@@ -68,7 +69,7 @@ impl ParsedPattern {
                 })
             })
             .collect()
-    }
+    } */
 
     fn arc(bullets: Vec<Bullet>, count: u32, angle: f32) -> Vec<Bullet> {
         if count == 1 {
@@ -81,7 +82,7 @@ impl ParsedPattern {
             .flat_map(|b| {
                 (0..count).map(|i| Bullet {
                     rotation: b.rotation - angle / 2.0 + step * i as f32,
-                    ..*b
+                    ..b.clone()
                 })
             })
             .collect()
@@ -98,10 +99,10 @@ impl ParsedPattern {
         for op in self.operations.iter() {
             bullets = match op {
                 PatternOp::Ring(count, radius) => {
-                    ParsedPattern::ring(bullets, count.eval(EmptyNamespace) as u32, *radius)
+                    ParsedPattern::ring(bullets, count.eval(&mut EmptyNamespace) as u32, *radius)
                 }
                 PatternOp::Arc(count, angle) => ParsedPattern::arc(bullets, *count, *angle),
-                PatternOp::Bullet(_) => {
+                PatternOp::Bullet(bullet) => {
                     for bullet_comp in bullets.iter() {
                         commands.spawn((
                             SpriteBundle {
@@ -110,7 +111,11 @@ impl ParsedPattern {
                                 ..Default::default()
                             },
                             modifiers_bundle,
-                            bullet_comp.clone(),
+                            Bullet {
+                                speed: bullet.speed.clone(),
+                                angular_velocity: bullet.angular_velocity.clone(),
+                                ..bullet_comp.clone()
+                            }
                         ));
                     }
                     bullets
@@ -154,7 +159,8 @@ pub fn parse(source: &str) -> ParsedPattern {
                     (value["angle"].as_f64().expect("No angle provided.") as f32).to_radians(),
                 ),
                 "bullet" => PatternOp::Bullet(Bullet {
-                    speed: value["speed"].as_f64().expect("No speed provided.") as f32,
+                    speed: Arc::new(parse_expression(&value, "speed")),
+                    angular_velocity: Arc::new(parse_expression(&value, "angular_velocity")),
                     ..Default::default()
                 }),
                 _ => {
@@ -173,9 +179,13 @@ fn parse_expression(value: &Value, key: &str) -> ExpressionSlab {
     let binding = value[key].to_string();
     let expression = binding.trim_matches('\"');
     
+    parse_string(expression)
+}
+
+pub(crate) fn parse_string(string: &str) -> ExpressionSlab {
     let mut slab = Slab::new();
     let expression = fasteval::Parser::new()
-        .parse(expression, &mut slab.ps)
+        .parse(string, &mut slab.ps)
         .unwrap()
         .from(&slab.ps);
 
@@ -191,19 +201,21 @@ pub struct ExpressionSlab {
 }
 
 impl ExpressionSlab {
-    fn new(expression: Instruction, slab: Slab) -> Self {
+    pub fn new(expression: Instruction, slab: Slab) -> Self {
         Self { expression, slab }
     }
 
-    fn eval(&self, data: impl EvalNamespace) -> f64 {
+    pub fn eval(&self, data: &mut impl EvalNamespace) -> f32 {
         self.try_eval(data).unwrap()
     }
 
-    fn try_eval(&self, mut data: impl EvalNamespace) -> Result<f64, fasteval::Error> {
+    fn try_eval(&self, data: &mut impl EvalNamespace) -> Result<f32, fasteval::Error> {
+        // let mut ns = &mut StrToF64Namespace::from([("t", 0.5)]);
+        
         Ok(fasteval::eval_compiled_ref!(
             &self.expression,
             &self.slab,
-            &mut data
-        ))
+            &mut *data
+        ) as f32)
     }
 }

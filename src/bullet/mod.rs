@@ -1,15 +1,16 @@
 mod modifiers;
 mod pattern;
 
-use std::{f32::consts::PI, path::Path};
+use std::{f32::consts::PI, path::Path, sync::Arc};
 
 use bevy::prelude::*;
+use fasteval::{Slab, StrToF64Namespace};
 
 use crate::{editor::is_ui_unfocused, player::Player};
 
 use self::{
     modifiers::*,
-    pattern::{ParsedPattern, ParsedPatterns, PatternLoader},
+    pattern::{parse_string, ExpressionSlab, ParsedPattern, ParsedPatterns, PatternLoader},
 };
 
 pub struct BulletPlugin;
@@ -28,18 +29,37 @@ impl Plugin for BulletPlugin {
     }
 }
 
-#[derive(Component, Default, Debug, Clone)]
+#[derive(Component, Clone, Debug)]
 pub struct Bullet {
+    lifetime: f32,
     position: Vec2,
     rotation: f32,
-    speed: f32,
-    lifetime: f32,
+    angular_velocity: Arc<ExpressionSlab>,
+    speed: Arc<ExpressionSlab>,
+}
+
+impl Default for Bullet {
+    fn default() -> Self {
+        Self {
+            speed: Arc::new(ExpressionSlab::new(
+                fasteval::Instruction::IConst(0.),
+                Slab::default(),
+            )),
+            angular_velocity: Arc::new(ExpressionSlab::new(
+                fasteval::Instruction::IConst(0.),
+                Slab::default(),
+            )),
+            position: Vec2::default(),
+            lifetime: f32::default(),
+            rotation: f32::default(),
+        }
+    }
 }
 
 impl Bullet {
     pub fn new(speed: f32) -> Self {
         Self {
-            speed,
+            speed: Arc::new(parse_string(speed.to_string().as_str())),
             ..Default::default()
         }
     }
@@ -81,145 +101,7 @@ fn spawn_bullets(
     if let Some(pattern) = pattern {
         pattern.fire(&mut commands, &texture, ());
     }
-
-    //let parsed_pattern = pattern::parse("");
-    /*
-    Pattern::new(Bullet::new(60.0))
-        .aimed(player.translation)
-        .arc(8, 45.)
-        // .add_modifier(AngularVelocity::new(0.5))
-        .fire(
-            &mut commands,
-            &texture,
-            (), /* AngularVelocity::new(0.5) */
-        );
-
-    Pattern::new(Bullet::new(40.)).ring(32, 0.).fire(
-        &mut commands,
-        &texture,
-        AngularVelocity::new(0.5),
-    );
-
-    Pattern::new(Bullet::new(40.)).ring(32, 0.).fire(
-        &mut commands,
-        &texture,
-        Delayed::<Aimed> {
-            wait: 1.,
-            component: Aimed,
-        },
-    ); */
 }
-
-/* struct Pattern {
-    bullets: Vec<Bullet>,
-}
-
-impl Default for Pattern {
-    fn default() -> Self {
-        Self {
-            bullets: vec![Bullet {
-                speed: 1.,
-                ..Default::default()
-            }],
-        }
-    }
-}
-
-impl Pattern {
-    /* fn new(bullet: Bullet) -> Self {
-        Self {
-            bullets: vec![bullet],
-        }
-    } */
-    /*
-       fn add_modifier(mut self, modifier: impl Modifier) -> Self {
-           self.modifiers.push(Box::new(modifier));
-           self
-       }
-    */
-    /* fn ring(mut self, count: u32, radius: f32) -> Self {
-        self.bullets = self
-            .bullets
-            .iter_mut()
-            .flat_map(|b| {
-                (0..count).map(|i| {
-                    let rotation = b.rotation + i as f32 / count as f32 * 2. * PI;
-                    Bullet {
-                        position: b.position + Vec2::from_angle(rotation) * radius,
-                        rotation,
-                        ..*b
-                    }
-                })
-            })
-            .collect();
-        self
-    } */
-
-    #[allow(dead_code)]
-    fn line(mut self, count: u32, delta_speed: f32) -> Self {
-        self.bullets = self
-            .bullets
-            .iter_mut()
-            .flat_map(|b| {
-                (0..count).map(|i| Bullet {
-                    speed: b.speed + delta_speed * i as f32,
-                    ..*b
-                })
-            })
-            .collect();
-        self
-    }
-
-    fn arc(mut self, count: u32, angle: f32) -> Self {
-        let step = angle / (count as f32 - 1.0);
-        self.bullets = self
-            .bullets
-            .iter_mut()
-            .flat_map(|b| {
-                (0..count).map(|i| Bullet {
-                    rotation: b.rotation - angle / 2.0 + step * i as f32,
-                    ..*b
-                })
-            })
-            .collect();
-        self
-    }
-
-    fn aimed(mut self, translation: Vec3) -> Self {
-        self.bullets = self
-            .bullets
-            .iter_mut()
-            .map(|b| {
-                let offset = translation - b.position.extend(0.);
-                Bullet {
-                    rotation: offset.y.atan2(offset.x) + PI,
-                    ..*b
-                }
-            })
-            .collect();
-        self
-    }
-
-    fn fire(
-        self,
-        commands: &mut Commands,
-        texture: &Handle<Image>,
-        modifiers_bundle: impl Bundle + Copy,
-    ) {
-        let bullets = self.bullets;
-        for bullet_comp in bullets.into_iter() {
-            commands.spawn((
-                SpriteBundle {
-                    texture: texture.clone(),
-                    transform: calculate_transform(&bullet_comp),
-                    ..Default::default()
-                },
-                modifiers_bundle,
-                bullet_comp,
-            ));
-        }
-    }
-} */
 
 fn collide_bullets(
     player_query: Query<&Transform, (With<Player>, Without<Bullet>)>,
@@ -257,15 +139,24 @@ fn calculate_transform(bullet: &Bullet) -> Transform {
 }
 
 fn move_bullets(mut bullet_query: Query<&mut Bullet>, time: Res<Time>) {
+    let mut namespace = StrToF64Namespace::new();
+    namespace.insert("t", 0.);
+
     for mut bullet in bullet_query.iter_mut() {
         let Bullet {
             position,
             rotation,
             speed,
-            lifetime
+            lifetime,
+            angular_velocity
         } = bullet.as_mut();
-        *position += Vec2::from_angle(*rotation) * *speed * time.delta_seconds();
+        
         *lifetime += time.delta_seconds();
+        namespace.insert("t", *lifetime as f64);
+        *rotation += angular_velocity.eval(&mut namespace) as f32 * time.delta_seconds();
+        *position += Vec2::from_angle(*rotation)
+            * speed.eval(&mut namespace) as f32
+            * time.delta_seconds();
     }
 }
 
