@@ -106,11 +106,11 @@ impl ParsedPattern {
                 PatternOp::Bullet(bullet) => {
                     for bullet_comp in bullets.iter() {
                         commands.spawn((
-                            SpriteBundle {
+                            /* SpriteBundle {
                                 texture: texture.clone(),
                                 transform: super::calculate_transform(&bullet_comp),
                                 ..Default::default()
-                            },
+                            }, */
                             modifiers_bundle,
                             Bullet {
                                 speed: bullet.speed.clone(),

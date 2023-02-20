@@ -1,0 +1,15 @@
+{
+    "type": "ring",
+    "count": "6",
+    "child": {
+        "type": "arc",
+        "count": 3,
+        "angle": 30,
+        "child": {
+            "type": "bullet",
+            "id": "rice_pellet01",
+            "speed": "20",
+            "angular_velocity": "0"
+        }
+    }
+}

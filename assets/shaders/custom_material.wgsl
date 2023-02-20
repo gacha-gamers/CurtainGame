@@ -18,7 +18,7 @@
 
 struct Vertex {
     @location(0) position: vec3<f32>,
-    @location(2) uv: vec2<f32>,
+    // @location(2) uv: vec2<f32>,
 }
 
 struct MyVertexOutput {
@@ -29,12 +29,13 @@ struct MyVertexOutput {
 
 
 @vertex
-fn vertex(vertex: Vertex) -> MyVertexOutput {
+fn vertex(vertex: Vertex, @builtin(vertex_index) in_vertex_index: u32) -> MyVertexOutput {
     var out: MyVertexOutput;
 
     out.world_position = mesh2d_position_local_to_world(mesh.model, vec4<f32>(vertex.position, 1.0));
     out.clip_position = mesh2d_position_world_to_clip(out.world_position);
-    out.uv = vertex.uv;
+    out.uv = vec2<f32>(f32((in_vertex_index & 1u)), f32((in_vertex_index & 2u) / 2u));
+    // out.uv = vertex.uv;
     return out;
 }
 

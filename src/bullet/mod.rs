@@ -111,15 +111,15 @@ fn spawn_bullets(
 
 fn collide_bullets(
     player_query: Query<&Transform, (With<Player>, Without<Bullet>)>,
-    bullet_query: Query<(Entity, &Transform), With<Bullet>>,
+    bullet_query: Query<(Entity, &Bullet)>,
     mut commands: Commands,
 ) {
     let player_thiccness = 5.;
     let player_thiccness = player_thiccness * player_thiccness;
 
     for player_tr in player_query.iter() {
-        for (entity, tr) in bullet_query.iter() {
-            if player_tr.translation.distance_squared(tr.translation) < player_thiccness {
+        for (entity, bullet) in bullet_query.iter() {
+            if player_tr.translation.distance_squared(bullet.position.extend(0.)) < player_thiccness {
                 commands.entity(entity).despawn();
             }
         }
