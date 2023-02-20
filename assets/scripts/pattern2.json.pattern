@@ -1,15 +1,19 @@
 {
     "type": "ring",
-    "count": "6",
+    "count": "3 + 3",
+    "radius": "$ring_radius",
+    "params": {
+        "ring_radius": "sin(t)"
+    },
     "child": {
         "type": "arc",
-        "count": 3,
+        "count": 500,
         "angle": 30,
         "child": {
             "type": "bullet",
             "id": "rice_pellet01",
-            "speed": "20",
-            "angular_velocity": "0"
+            "speed": "t * 10",
+            "angular_velocity": "t - 10"
         }
     }
 }

@@ -2,17 +2,19 @@ mod modifiers;
 mod pattern;
 mod render;
 
-use std::{f32::consts::PI, path::Path, sync::Arc};
+use std::{path::Path, sync::Arc};
 
-use bevy::{ecs::query::QueryItem, prelude::*, render::extract_component::ExtractComponent};
+use bevy::{prelude::*, tasks::ComputeTaskPool};
 use fasteval::{Slab, StrToF64Namespace};
-use itertools::{izip, multizip};
+use itertools::multizip;
+use rayon::prelude::*;
 
 use crate::{editor::is_ui_unfocused, player::Player};
 
 use self::{
     modifiers::*,
-    pattern::{parse_string, ExpressionSlab, ParsedPattern, ParsedPatterns, PatternLoader}, render::BulletRenderPlugin,
+    pattern::{parse_string, ExpressionSlab, ParsedPattern, ParsedPatterns, PatternLoader},
+    render::BulletRenderPlugin,
 };
 
 pub struct BulletPlugin;
@@ -26,11 +28,11 @@ impl Plugin for BulletPlugin {
             .init_asset_loader::<PatternLoader>()
             .add_startup_system(load_patterns)
             .init_resource::<BulletContainer>()
+            .add_system(BulletContainer::tick_bullets)
             .add_system(move_bullets)
-            .add_system(tick_bullets)
             .add_system(collide_bullets)
-            .add_system(spawn_bullets.with_run_criteria(is_ui_unfocused))
-            .add_system(transform_bullets.after(spawn_bullets));
+            .add_system(spawn_bullets.with_run_criteria(is_ui_unfocused));
+        // .add_system(transform_bullets.after(spawn_bullets));
     }
 }
 
@@ -88,7 +90,7 @@ fn load_patterns(
 
 fn spawn_bullets(
     mut commands: Commands,
-    mut bullet_container: ResMut<BulletContainer>,
+    bullet_container: ResMut<BulletContainer>,
     asset_server: Res<AssetServer>,
     patterns: ResMut<Assets<ParsedPattern>>,
     input: Res<Input<KeyCode>>,
@@ -119,28 +121,14 @@ fn collide_bullets(
 
     for player_tr in player_query.iter() {
         for (entity, bullet) in bullet_query.iter() {
-            if player_tr.translation.distance_squared(bullet.position.extend(0.)) < player_thiccness {
+            if player_tr
+                .translation
+                .distance_squared(bullet.position.extend(0.))
+                < player_thiccness
+            {
                 commands.entity(entity).despawn();
             }
         }
-    }
-}
-
-fn transform_bullets(mut bullet_query: Query<(&mut Transform, &Bullet)>) {
-    for (mut tr, bullet) in bullet_query.iter_mut() {
-        *tr = calculate_transform(bullet);
-    }
-}
-
-fn calculate_transform(bullet: &Bullet) -> Transform {
-    Transform {
-        translation: Vec3 {
-            x: bullet.position.x,
-            y: bullet.position.y,
-            z: 0.,
-        },
-        rotation: Quat::from_rotation_z(bullet.rotation - PI / 2.),
-        ..Default::default()
     }
 }
 
@@ -174,10 +162,84 @@ pub struct BulletContainer {
     angulars: Vec<f32>,
 }
 
+impl BulletContainer {
+    pub fn add(&mut self, lifetime: f32, position: Vec2, rotation: f32, speed: f32, angular: f32) {
+        self.lifetimes.push(lifetime);
+        self.positions.push(position);
+        self.rotations.push(rotation);
+        self.speeds.push(speed);
+        self.angulars.push(angular);
+    }
+
+    fn tick(
+        &mut self,
+        time: Res<Time>,
+        player_query: Query<&Transform, (With<Player>, Without<Bullet>)>,
+    ) {
+        let time = time.delta_seconds();
+
+        (
+            &mut self.lifetimes,
+            &mut self.positions,
+            &mut self.rotations,
+            &self.speeds,
+            &self.angulars,
+        )
+            .into_par_iter()
+            .for_each(|(lifetime, position, rotation, speed, angular)| {
+                *lifetime += time;
+                *position += Vec2::from_angle(*rotation) * *speed * time;
+                *rotation += *angular * time;
+            });
+
+        let player_thiccness = 5.;
+        let player_thiccness = player_thiccness * player_thiccness;
+
+        for player_tr in player_query.iter() {
+            let player_pos = player_tr.translation.truncate();
+            for bullet_pos in self.positions.iter() {
+                if player_pos.distance_squared(*bullet_pos) < player_thiccness {
+                    // Remove bullet through collision detection
+                }
+            }
+        }
+        /*
+        let meshes = ComputeTaskPool::get().scope(|scope| {
+            for chunk in slice.chunks(CHUNK_SIZE) {
+                scope.spawn(async move { make_mesh(chunk, Vec2::new(8., 14.)) });
+            }
+        });
+
+        for (lifetime, position, rotation, speed, angular) in multizip((
+            &mut self.lifetimes,
+            &mut self.positions,
+            &mut self.rotations,
+            &self.speeds,
+            &self.angulars,
+        )) {
+            *lifetime += time;
+            *position += Vec2::from_angle(*rotation) * *speed * time;
+            *rotation += *angular * time;
+        } */
+    }
+
+    fn tick_bullets(
+        mut container: ResMut<BulletContainer>,
+        time: Res<Time>,
+        player_query: Query<&Transform, (With<Player>, Without<Bullet>)>,
+    ) {
+        container.tick(time, player_query);
+    }
+
+    pub fn len(&self) -> usize {
+        self.positions.len()
+    }
+}
+
 impl Default for BulletContainer {
     fn default() -> Self {
         const CAPACITY: usize = 100000;
-        
+
         Self {
             lifetimes: Vec::with_capacity(CAPACITY),
             positions: Vec::with_capacity(CAPACITY),
@@ -186,48 +248,4 @@ impl Default for BulletContainer {
             angulars: Vec::with_capacity(CAPACITY),
         }
     }
-}
-
-fn tick_bullets(container: ResMut<BulletContainer>, time: Res<Time>) {
-    let BulletContainer { mut lifetimes, mut positions, mut rotations, speeds, angulars } = container.to_owned();
-    let time = time.delta_seconds();
-
-    for (lifetime, position, rotation, speed, angular) in multizip((
-        &mut lifetimes,
-        &mut positions,
-        &mut rotations,
-        &speeds,
-        &angulars,
-    )) {
-        *lifetime += time;
-        *position += Vec2::from_angle(*rotation) * *speed * time;
-        *rotation += *angular * time;
-    }
-    /*         for (position, velocity) in self.positions.iter_mut().zip .zip(self.speeds.iter()) {
-        *position += *velocity;
-    } */
-}
-
-impl BulletContainer {
-    
-    /*
-    pub fn add_from_loop<F>(&mut self, count: u32, callback: F)
-    where
-        F: Fn(f32) -> (Vec3, Vec3),
-    {
-        let (positions, velocities): (Vec<Vec3>, Vec<Vec3>) = (0..count)
-            .map(|i| callback(i as f32 / count as f32))
-            .unzip();
-        self.positions.extend(positions.iter());
-        self.velocities.extend(velocities.iter());
-    } */
-    /*
-    pub fn from_loop<F>(count: u32, callback: F) -> Self
-    where
-        F: Fn(f32) -> (Vec3, Vec3),
-    {
-        let mut inst = Self::default();
-        inst.add_from_loop(count, callback);
-        inst
-    } */
 }

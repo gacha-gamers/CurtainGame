@@ -12,7 +12,7 @@ use bevy::{
     utils::Duration,
 };
 
-use crate::bullet::Bullet;
+use crate::bullet::{Bullet, BulletContainer};
 
 const FONT_SIZE: f32 = 32.0;
 const FONT_COLOR: Color = Color::GOLD;
@@ -71,6 +71,7 @@ fn update(
     state_resource: Option<ResMut<ScreenDiagsState>>,
     mut fps_text_query: Query<&mut Text, (With<ScreenDiagsText>, Without<BulletCountText>)>,
     mut bullet_text_query: Query<&mut Text, (With<BulletCountText>, Without<ScreenDiagsText>)>,
+    mut bullet_container: ResMut<BulletContainer>,
     bullet_query: Query<With<Bullet>>,
 ) {
     if let Some(mut state) = state_resource {
@@ -100,7 +101,7 @@ fn update(
                     let value = &mut text.sections[0].value;
                     value.clear();
 
-                    write!(value, "{}{:.0}", "Bullets: ", bullet_query.iter().len()).unwrap();
+                    write!(value, "{}{:.0}", "Bullets: ", bullet_container.len()).unwrap();
                 }
             }
         }

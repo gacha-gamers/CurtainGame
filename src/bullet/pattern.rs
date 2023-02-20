@@ -92,7 +92,7 @@ impl ParsedPattern {
         &self,
         commands: &mut Commands,
         mut bullet_container: ResMut<BulletContainer>,
-        texture: &Handle<Image>,
+        _texture: &Handle<Image>,
         modifiers_bundle: impl Bundle + Copy,
     ) {
         let mut bullets = vec![Bullet::new(60.)];
@@ -105,7 +105,7 @@ impl ParsedPattern {
                 PatternOp::Arc(count, angle) => ParsedPattern::arc(bullets, *count, *angle),
                 PatternOp::Bullet(bullet) => {
                     for bullet_comp in bullets.iter() {
-                        commands.spawn((
+                        /* commands.spawn((
                             /* SpriteBundle {
                                 texture: texture.clone(),
                                 transform: super::calculate_transform(&bullet_comp),
@@ -117,9 +117,9 @@ impl ParsedPattern {
                                 angular_velocity: bullet.angular_velocity.clone(),
                                 ..bullet_comp.clone()
                             }
-                        ));
-
-                        // bullet_container.add_bullet()
+                        )); */
+                        
+                        bullet_container.add(0.0, bullet_comp.position, bullet_comp.rotation, bullet.speed.clone().eval(&mut EmptyNamespace), bullet.angular_velocity.clone().eval(&mut EmptyNamespace));
                     }
                     bullets
                 }

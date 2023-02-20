@@ -6,3 +6,4 @@
 
 # Ignore potential flamegraph.svg files in the root directory
 /*.svg
+/*.tracy
