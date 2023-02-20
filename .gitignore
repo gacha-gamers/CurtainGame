@@ -20,6 +20,6 @@
 # project support forks? I'd prefer that as opposed to
 # creating a branch
 # - shnCanos
-/Cargo.lock
+Cargo.lock
 # PS: Ok seriously enable forks, this is driving me nuts
 
