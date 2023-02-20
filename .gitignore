@@ -7,3 +7,19 @@
 # Ignore potential flamegraph.svg files in the root directory
 /*.svg
 /*.tracy
+
+# Ignore Cargo.lock (PLEASE! EVERY TIME YOU MAKE CHANGES 
+# I AM HAVING TO RECOMPILE THE WHOLE PROJECT AND IT TAKES 
+# WAY OVER ONE HOUR TO DO IT SINCE THIS PC CAN'T HANDLE
+# EVEN VCODE! EVERY KEY I TYPE TAKES 0.5S TO APPEAR AND
+# IF I TYPE TOO FAST THE PC SIMPLY IGNORES THEM! HOW AM
+# I GOING TO CONTRIBUTE LIKE THIS? HOW AM I GOING TO EVEN
+# TRY THE GAME?! (THINKING BETTER, THE TYPING THING PROBABLY
+# HAD SOMETHING TO DO WITH THE FACT THAT I AM COMPILING THE
+# PROJECT AS I TYPE. APOLOGIES.)). Also, why doesn't your
+# project support forks? I'd prefer that as opposed to
+# creating a branch
+# - shnCanos
+Cargo.lock
+# PS: Ok seriously enable forks, this is driving me nuts
+
