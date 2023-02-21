@@ -1,4 +1,6 @@
+use std::collections::BTreeMap;
 use std::f32::consts::PI;
+use std::path::Path;
 use std::str::from_utf8;
 use std::sync::Arc;
 
@@ -11,11 +13,12 @@ use bevy::{
 use fasteval::*;
 use serde_json::Value;
 
-use super::{Bullet, BulletContainer};
+use super::BulletContainer;
 
 #[derive(Default)]
 pub struct PatternLoader;
 
+// Load assets (I guess?)
 impl AssetLoader for PatternLoader {
     fn load<'a>(
         &'a self,
@@ -29,26 +32,102 @@ impl AssetLoader for PatternLoader {
         })
     }
 
+    // I don't like this extension, but I don't know how to get rid of it either...
     fn extensions(&self) -> &[&str] {
-        &["json.pattern"]
+        &["pattern.json"]
     }
 }
 
-#[derive(Default, Debug, TypeUuid)]
-#[uuid = "1ff044c3-1d98-4b22-a7e2-73a41298ff98"]
-pub struct ParsedPattern {
-    pub operations: Vec<PatternOp>,
-    pub instructions: Vec<InstructionI>,
+impl PatternLoader {
+    // Force-load every pattern script
+    // I'm not sure if this is the best way to do it,
+    // nor if I should do it to begin with, but...
+    pub(crate) fn init_database(
+        asset_server: Res<AssetServer>,
+        mut patterns: ResMut<PatternDatabase>,
+    ) {
+        if let Ok(scripts_iter) = asset_server
+            .asset_io()
+            .read_directory(Path::new("./patterns"))
+        {
+            for path in scripts_iter {
+                if !path.to_str().unwrap().ends_with("pattern.json") {
+                    continue;
+                }
+
+                let handle = asset_server.load(path.clone());
+                patterns.0.insert(
+                    path.file_stem()
+                        .map(|u| u.to_str().unwrap().split('.').next().unwrap())
+                        .and_then(|str| Some(String::from(str)))
+                        .unwrap(),
+                    handle,
+                );
+            }
+        }
+    }
 }
 
-impl ParsedPattern {
-    fn ring(bullets: Vec<Bullet>, count: u32, radius: f32) -> Vec<Bullet> {
+#[derive(Component, Clone, Debug)]
+pub struct BulletContext {
+    lifetime: f32,
+    position: Vec2,
+    rotation: f32,
+    angular_velocity: Arc<ExpressionSlab>,
+    speed: Arc<ExpressionSlab>,
+}
+
+impl Default for BulletContext {
+    fn default() -> Self {
+        Self {
+            lifetime: 10.,
+            speed: Arc::new(ExpressionSlab::new(
+                fasteval::Instruction::IConst(0.),
+                Slab::default(),
+            )),
+            angular_velocity: Arc::new(ExpressionSlab::new(
+                fasteval::Instruction::IConst(0.),
+                Slab::default(),
+            )),
+            position: Vec2::default(),
+            rotation: f32::default(),
+        }
+    }
+}
+
+impl BulletContext {
+    pub fn new(speed: f32) -> Self {
+        Self {
+            speed: Arc::new(ExpressionSlab::from(speed.to_string().as_str())),
+            ..Default::default()
+        }
+    }
+}
+
+#[derive(Resource, Default)]
+pub(crate) struct PatternDatabase(pub BTreeMap<String, Handle<Pattern>>);
+
+impl PatternDatabase {
+    pub fn get(&self, key: &str) -> Option<Handle<Pattern>> {
+        self.0.get(key).and_then(|p| Some(p.clone())).clone()
+    }
+}
+
+// ParsedPattern assets get generated from .json.pattern files in /assets/scripts/
+#[derive(Default, Debug, TypeUuid)]
+#[uuid = "1ff044c3-1d98-4b22-a7e2-73a41298ff98"]
+pub struct Pattern {
+    pub operations: Vec<PatternOp>,
+}
+
+impl Pattern {
+    fn ring(bullets: Vec<BulletContext>, count: u32, radius: f32) -> Vec<BulletContext> {
         bullets
             .iter()
             .flat_map(|b| {
                 (0..count).map(|i| {
                     let rotation = b.rotation + i as f32 / count as f32 * 2. * PI;
-                    Bullet {
+                    BulletContext {
                         position: b.position + Vec2::from_angle(rotation) * radius,
                         rotation,
                         ..b.clone()
@@ -57,21 +136,8 @@ impl ParsedPattern {
             })
             .collect()
     }
-/* 
-    #[allow(dead_code)]
-    fn line(bullets: Vec<Bullet>, count: u32, delta_speed: f32) -> Vec<Bullet> {
-        bullets
-            .iter()
-            .flat_map(|b| {
-                (0..count).map(|i| Bullet {
-                    speed: b.speed + delta_speed * i as f32,
-                    ..*b
-                })
-            })
-            .collect()
-    } */
 
-    fn arc(bullets: Vec<Bullet>, count: u32, angle: f32) -> Vec<Bullet> {
+    fn arc(bullets: Vec<BulletContext>, count: u32, angle: f32) -> Vec<BulletContext> {
         if count == 1 {
             return bullets;
         }
@@ -80,7 +146,7 @@ impl ParsedPattern {
         bullets
             .iter()
             .flat_map(|b| {
-                (0..count).map(|i| Bullet {
+                (0..count).map(|i| BulletContext {
                     rotation: b.rotation - angle / 2.0 + step * i as f32,
                     ..b.clone()
                 })
@@ -88,39 +154,33 @@ impl ParsedPattern {
             .collect()
     }
 
-    pub fn fire(
-        &self,
-        commands: &mut Commands,
-        mut bullet_container: ResMut<BulletContainer>,
-        _texture: &Handle<Image>,
-        modifiers_bundle: impl Bundle + Copy,
-    ) {
-        let mut bullets = vec![Bullet::new(60.)];
+    pub fn fire(&self, mut bullet_container: ResMut<BulletContainer>) {
+        let mut bullets = vec![BulletContext::new(60.)];
 
         for op in self.operations.iter() {
             bullets = match op {
-                PatternOp::Ring(count, radius) => {
-                    ParsedPattern::ring(bullets, count.eval(&mut EmptyNamespace) as u32, *radius)
-                }
-                PatternOp::Arc(count, angle) => ParsedPattern::arc(bullets, *count, *angle),
+                PatternOp::Ring(count, radius) => Pattern::ring(
+                    bullets,
+                    count.eval(&mut StrToF64Namespace::from([("t", 0.0)])) as u32,
+                    *radius,
+                ),
+                PatternOp::Arc(count, angle) => Pattern::arc(bullets, *count, *angle),
                 PatternOp::Bullet(bullet) => {
-                    for bullet_comp in bullets.iter() {
-                        /* commands.spawn((
-                            /* SpriteBundle {
-                                texture: texture.clone(),
-                                transform: super::calculate_transform(&bullet_comp),
-                                ..Default::default()
-                            }, */
-                            modifiers_bundle,
-                            Bullet {
-                                speed: bullet.speed.clone(),
-                                angular_velocity: bullet.angular_velocity.clone(),
-                                ..bullet_comp.clone()
-                            }
-                        )); */
-                        
-                        bullet_container.add(0.0, bullet_comp.position, bullet_comp.rotation, bullet.speed.clone().eval(&mut EmptyNamespace), bullet.angular_velocity.clone().eval(&mut EmptyNamespace));
-                    }
+                    bullets.iter().for_each(|iter_bullet| {
+                        bullet_container.add(
+                            bullet.lifetime,
+                            iter_bullet.position,
+                            iter_bullet.rotation,
+                            bullet
+                                .speed
+                                .clone()
+                                .eval(&mut StrToF64Namespace::from([("t", 0.0)])),
+                            bullet
+                                .angular_velocity
+                                .clone()
+                                .eval(&mut StrToF64Namespace::from([("t", 0.0)])),
+                        );
+                    });
                     bullets
                 }
             }
@@ -128,27 +188,22 @@ impl ParsedPattern {
     }
 }
 
-#[derive(Resource, Default)]
-pub struct ParsedPatterns(pub Vec<Handle<ParsedPattern>>);
-
 #[derive(Debug)]
 pub enum PatternOp {
     Ring(Box<ExpressionSlab>, f32),
     Arc(u32, f32 /* fasteval::Expression */),
-    Bullet(Bullet),
+    Bullet(BulletContext),
 }
 
-pub fn parse(source: &str) -> ParsedPattern {
+pub fn parse(source: &str) -> Pattern {
     let json: serde_json::error::Result<Value> = serde_json::from_str(source);
 
     let mut value = &match json {
-        Err(error) => {
-            panic!("Error while parsing pattern: {error}");
-        }
+        Err(error) => panic!("Error while parsing pattern: {error}"),
         Ok(t) => t,
     };
 
-    let mut pattern = ParsedPattern::default();
+    let mut pattern = Pattern::default();
 
     while !value.is_null() {
         if let Value::String(element_type) = &value["type"] {
@@ -161,7 +216,8 @@ pub fn parse(source: &str) -> ParsedPattern {
                     value["count"].as_u64().expect("No count provided.") as u32,
                     (value["angle"].as_f64().expect("No angle provided.") as f32).to_radians(),
                 ),
-                "bullet" => PatternOp::Bullet(Bullet {
+                "bullet" => PatternOp::Bullet(BulletContext {
+                    lifetime: value["lifetime"].as_f64().unwrap_or(10.) as f32,
                     speed: Arc::new(parse_expression(&value, "speed")),
                     angular_velocity: Arc::new(parse_expression(&value, "angular_velocity")),
                     ..Default::default()
@@ -181,11 +237,8 @@ pub fn parse(source: &str) -> ParsedPattern {
 fn parse_expression(value: &Value, key: &str) -> ExpressionSlab {
     let binding = value[key].to_string();
     let expression = binding.trim_matches('\"');
-    
-    parse_string(expression)
-}
 
-pub(crate) fn parse_string(string: &str) -> ExpressionSlab {
+    let string = expression;
     let mut slab = Slab::new();
     let expression = fasteval::Parser::new()
         .parse(string, &mut slab.ps)
@@ -203,6 +256,20 @@ pub struct ExpressionSlab {
     slab: Slab,
 }
 
+impl From<&str> for ExpressionSlab {
+    fn from(value: &str) -> Self {
+        let mut slab = Slab::new();
+        let expression = fasteval::Parser::new()
+            .parse(value, &mut slab.ps)
+            .unwrap()
+            .from(&slab.ps);
+
+        let expression = expression.compile(&slab.ps, &mut slab.cs);
+
+        ExpressionSlab::new(expression, slab)
+    }
+}
+
 impl ExpressionSlab {
     pub fn new(expression: Instruction, slab: Slab) -> Self {
         Self { expression, slab }
@@ -214,11 +281,7 @@ impl ExpressionSlab {
 
     fn try_eval(&self, data: &mut impl EvalNamespace) -> Result<f32, fasteval::Error> {
         // let mut ns = &mut StrToF64Namespace::from([("t", 0.5)]);
-        
-        Ok(fasteval::eval_compiled_ref!(
-            &self.expression,
-            &self.slab,
-            &mut *data
-        ) as f32)
+
+        Ok(fasteval::eval_compiled_ref!(&self.expression, &self.slab, &mut *data) as f32)
     }
 }

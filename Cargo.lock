@@ -586,15 +586,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bevy_mouse_tracking_plugin"
-version = "0.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "399d7c436699ad2cf5a8907d822c6f1bcc14e06fc6df68fb74c2d6b9d42a05d8"
-dependencies = [
- "bevy",
-]
-
-[[package]]
 name = "bevy_pbr"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1387,17 +1378,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "egui_node_graph"
-version = "0.4.0"
-source = "git+https://github.com/a-soulspark/egui_node_graph#c947455c0a4e68ae35e7e86f5f441a543da2a237"
-dependencies = [
- "egui",
- "slotmap",
- "smallvec",
- "thiserror",
-]
-
-[[package]]
 name = "either"
 version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1951,15 +1931,6 @@ checksum = "7789f7f3c9686f96164f5109d69152de759e76e284f736bd57661c6df5091919"
 dependencies = [
  "core-foundation-sys",
  "mach",
-]
-
-[[package]]
-name = "itertools"
-version = "0.10.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0fd2260e829bddf4cb6ea802289de2f86d6a7a690192fbe91b3f46e0f2c8473"
-dependencies = [
- "either",
 ]
 
 [[package]]
@@ -2945,14 +2916,9 @@ checksum = "43b2853a4d09f215c24cc5489c992ce46052d359b5109343cbafbf26bc62f8a3"
 name = "simidi"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "bevy",
  "bevy_egui",
- "bevy_mouse_tracking_plugin",
- "bytemuck",
- "egui_node_graph",
  "fasteval",
- "itertools",
  "rayon",
  "serde_json",
 ]
