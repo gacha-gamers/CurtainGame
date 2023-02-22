@@ -26,14 +26,14 @@ impl Plugin for BulletPlugin {
             .add_asset::<Pattern>()
             .add_startup_system(PatternLoader::init_database)
             .init_asset_loader::<PatternLoader>()
-            .init_resource::<BulletContainer>()
-            .add_system(BulletContainer::tick_bullets)
+            .init_resource::<BulletPool>()
+            .add_system(BulletPool::tick_bullets)
             .add_system(spawn_bullets.with_run_criteria(is_ui_unfocused));
     }
 }
 
 fn spawn_bullets(
-    bullet_container: ResMut<BulletContainer>,
+    bullet_container: ResMut<BulletPool>,
     patterns: Res<Assets<Pattern>>,
     pattern_db: Res<PatternDatabase>,
     editor_state: Res<EditorState>,
@@ -50,24 +50,25 @@ fn spawn_bullets(
 }
 
 #[derive(Resource, Clone)]
-pub struct BulletContainer {
+pub struct BulletPool {
     ages: Vec<f32>,
     lifetimes: Vec<f32>,
     positions: Vec<Vec2>,
     rotations: Vec<f32>,
     speeds: Vec<f32>,
     angulars: Vec<f32>,
-    bullet_index: usize,
-    bullet_count: usize,
+
+    pool_index: usize,
+    pool_count: usize,
 }
 
-impl BulletContainer {
-    const CAPACITY: usize = 60000;
+impl BulletPool {
+    const POOL_CAPACITY: usize = 100_000;
 
     pub fn add(&mut self, lifetime: f32, position: Vec2, rotation: f32, speed: f32, angular: f32) {
-        let i = self.bullet_index;
-        // Temporary, quite dirty approach for detecting if a bullet exists
-        let is_replacing = self.positions[i].x < 100000.0;
+        let i = self.pool_index;
+        // If the previous bullet at this index was alive, this is a replacement
+        let is_replacing = Self::is_alive(self.ages[i]);
 
         self.ages[i] = 0.;
         self.lifetimes[i] = lifetime;
@@ -76,14 +77,14 @@ impl BulletContainer {
         self.speeds[i] = speed;
         self.angulars[i] = angular;
 
-        self.bullet_index = (self.bullet_index + 1) % BulletContainer::CAPACITY;
-        self.bullet_count += !is_replacing as usize;
+        self.pool_index = (self.pool_index + 1) % BulletPool::POOL_CAPACITY;
+        self.pool_count += !is_replacing as usize;
     }
 
     fn tick(&mut self, time: Res<Time>) {
-        let time = time.delta_seconds();
+        let delta_time = time.delta_seconds();
 
-        let mut to_remove: Vec<usize> = (
+        let to_remove: Vec<usize> = (
             &mut self.ages,
             &mut self.lifetimes,
             &mut self.positions,
@@ -93,48 +94,45 @@ impl BulletContainer {
         )
             .into_par_iter()
             .enumerate()
-            .filter_map(|(i, (age, lifetime, position, rotation, speed, angular))| {
-                *position += Vec2::from_angle(*rotation) * *speed * time;
-                *rotation += *angular * time;
-                
-                // Dirty check if bullet is not dead
-                if position.x < 100000. {
-                    *age += time;
-                    if *age > *lifetime {
-                        return Some(i);
+            .filter_map(
+                |(index, (age, lifetime, position, rotation, speed, angular))| {
+                    if Self::is_alive(*age) {
+                        *position += Vec2::from_angle(*rotation) * *speed * delta_time;
+                        *rotation += *angular * delta_time;
+
+                        *age += delta_time;
+                        if *age > *lifetime {
+                            // Return this bullet's index so it can be removed
+                            return Some(index);
+                        }
                     }
-                }
 
-                None
-            }).collect();
+                    None
+                },
+            )
+            .collect();
 
-        to_remove.sort();
-        to_remove.reverse();
-        for r in to_remove {
-            self.remove(r);
-        }
+        self.remove_many(to_remove);
     }
 
     fn check_collisions(&mut self, player_tr: &Transform) {
         let player_pos = player_tr.translation.truncate();
 
-        let mut to_remove = vec![];
-        for (i, bullet_pos) in self.positions.iter().enumerate() {
-            if player_pos.distance_squared(*bullet_pos) < PLAYER_RADIUS_SQR {
-                to_remove.push(i);
-            }
-        }
+        let to_remove: Vec<usize> = self
+            .positions
+            .iter()
+            .enumerate()
+            .filter_map(|(index, bullet_pos)| {
+                // If the bullet is within reach of the player, return its index so it can be removed
+                (player_pos.distance_squared(*bullet_pos) < PLAYER_RADIUS_SQR).then_some(index)
+            })
+            .collect();
 
-        // Remove bullets marked to remove in the correct order
-        to_remove.sort();
-        to_remove.reverse();
-        for r in to_remove {
-            self.remove(r);
-        }
+        self.remove_many(to_remove);
     }
 
     fn tick_bullets(
-        mut container: ResMut<BulletContainer>,
+        mut container: ResMut<BulletPool>,
         player_query: Query<&Transform, With<Player>>,
         time: Res<Time>,
     ) {
@@ -143,28 +141,43 @@ impl BulletContainer {
     }
 
     pub fn len(&self) -> usize {
-        self.bullet_count
+        self.pool_count
     }
 
     fn remove(&mut self, i: usize) {
-        // Temporary, quite dirty approach for deleting bullets
-        self.positions[i] = Vec2::ONE * 100000000.;
-        self.speeds[i] = 0.0;
-        self.bullet_count -= 1;
+        if !Self::is_alive(self.ages[i]) {
+            return;
+        }
+
+        self.ages[i] = -1.0;
+        self.pool_count -= 1;
+    }
+
+    fn remove_many(&mut self, mut indices: Vec<usize>) {
+        indices.sort();
+        indices.reverse();
+        for r in indices {
+            self.remove(r);
+        }
+    }
+
+    /// Checks if a bullet is alive based on its age
+    fn is_alive(age: f32) -> bool {
+        age.is_sign_positive()
     }
 }
 
-impl Default for BulletContainer {
+impl Default for BulletPool {
     fn default() -> Self {
         Self {
-            lifetimes: vec![0.0; BulletContainer::CAPACITY],
-            positions: vec![Vec2::ONE * 100000000.; BulletContainer::CAPACITY],
-            rotations: vec![0.; BulletContainer::CAPACITY],
-            speeds: vec![0.; BulletContainer::CAPACITY],
-            angulars: vec![0.; BulletContainer::CAPACITY],
-            ages: vec![0.; BulletContainer::CAPACITY],
-            bullet_index: 0,
-            bullet_count: 0,
+            ages: vec![-1.; BulletPool::POOL_CAPACITY],
+            lifetimes: vec![0.0; BulletPool::POOL_CAPACITY],
+            positions: vec![Vec2::ONE * 100000000.; BulletPool::POOL_CAPACITY],
+            rotations: vec![0.; BulletPool::POOL_CAPACITY],
+            speeds: vec![0.; BulletPool::POOL_CAPACITY],
+            angulars: vec![0.; BulletPool::POOL_CAPACITY],
+            pool_index: 0,
+            pool_count: 0,
         }
     }
 }

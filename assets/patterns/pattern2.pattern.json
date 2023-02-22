@@ -8,7 +8,7 @@
         "child": {
             "type": "bullet",
             "id": "rice_pellet01",
-            "lifetime": 6.28,
+            "lifetime": 12.56,
             "speed": 100,
             "angular_velocity": 1
         }

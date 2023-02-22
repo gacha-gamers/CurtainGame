@@ -12,6 +12,9 @@ serde_json = "1.0.93"
 fasteval = "0.2.4"
 rayon = "1.6.1"
 
+[features]
+trace = ["bevy/trace_tracy"]
+
 # anyhow = "1.0.69"
 # egui_node_graph = { git = "https://github.com/a-soulspark/egui_node_graph" }
 

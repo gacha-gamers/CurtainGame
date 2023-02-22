@@ -13,7 +13,7 @@ use bevy::{
 use fasteval::*;
 use serde_json::Value;
 
-use super::BulletContainer;
+use super::BulletPool;
 
 #[derive(Default)]
 pub struct PatternLoader;
@@ -154,7 +154,7 @@ impl Pattern {
             .collect()
     }
 
-    pub fn fire(&self, mut bullet_container: ResMut<BulletContainer>) {
+    pub fn fire(&self, mut bullet_container: ResMut<BulletPool>) {
         let mut bullets = vec![BulletContext::new(60.)];
 
         for op in self.operations.iter() {
