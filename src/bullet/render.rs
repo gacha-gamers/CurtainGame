@@ -9,8 +9,8 @@ use bevy::{
         render_resource::{AsBindGroup, PrimitiveTopology, ShaderRef, VertexFormat},
     },
     sprite::{Material2d, Material2dPlugin, MaterialMesh2dBundle, Mesh2dHandle},
-    tasks::ComputeTaskPool,
 };
+use rayon::prelude::*;
 
 use super::BulletContainer;
 
@@ -55,37 +55,39 @@ fn make_bullet_meshes(
     mut bullet_meshes: ResMut<BulletMeshes>,
     container: Res<BulletContainer>,
     asset_server: Res<AssetServer>,
-    // mut last_mesh_count: Local<usize>,
+    mut last_mesh_count: Local<usize>,
 ) {
     #[cfg(trace_tracy)]
     let _span = info_span!("bullet mesh processing").entered();
 
-    let positions = container.positions.clone();
-    let rotations = container.rotations.clone();
-
-    let bullets_vec: Vec<_> = positions.into_iter().zip(rotations).collect();
-    let slice: &[(Vec2, f32)] = bullets_vec.as_ref();
+    // Collect all bullets that are not dead
+    let bullets_to_render: Vec<(Vec2, f32)> =
+        (&container.positions, &container.rotations, &container.ages)
+            .into_par_iter()
+            .filter_map(|(position, rotation, age)| {
+                BulletContainer::is_alive(*age).then_some((*position, *rotation))
+            })
+            .collect();
 
     // Iterate through the bullets' positions and rotations,
     // zipped together, in parallel, split into chunks of 4096 bullets.
     // Each chunk of bullets gets converted into a mesh, which then get used by MaterialMesh2d renderers below.
-    let generated_meshes = ComputeTaskPool::get().scope(|scope| {
-        for chunk in slice.chunks(CHUNK_SIZE) {
-            scope.spawn(async move { make_chunk_mesh(chunk, Vec2::new(8., 14.)) });
-        }
-    });
+    let mut generated_meshes: Vec<Mesh> = bullets_to_render
+        .par_chunks(CHUNK_SIZE)
+        .map(|chunk| make_chunk_mesh(chunk, Vec2::new(8., 14.)))
+        .collect();
 
     // If last frame, there were more meshes than this frame, ensure that those extra meshes get replaced by empty meshes (clear old bullets)
-    // [NO LONGER NECESSARY]
-    /* let new_mesh_count = generated_meshes.len();
-    generated_meshes.extend((0..last_mesh_count.saturating_sub(new_mesh_count)).map(|_| make_chunk_mesh(&[], Vec2::ZERO)));
-    *last_mesh_count = new_mesh_count; */
+    let new_mesh_count = generated_meshes.len();
+    generated_meshes
+        .extend((0..last_mesh_count.saturating_sub(new_mesh_count)).map(|_| make_empty_mesh()));
+    *last_mesh_count = new_mesh_count;
 
     #[cfg(trace_tracy)]
     event!(Level::INFO, "bullet mesh - creation done");
 
     for (i, generated_mesh) in generated_meshes.into_iter().enumerate() {
-        // This is literally the only time if/else that I wrote in the entire codebase so far (those in diagnostics.rs are copy-pasted lol)
+        // This is literally the only time if/else I wrote in the entire codebase so far. Refreshingly simple!
 
         // If there aren't enough bullet MaterialMesh2d renderers yet, spawn a new one after adding the mesh asset to the Assets
         if bullet_meshes.0.len() <= i {
@@ -155,6 +157,13 @@ fn make_chunk_mesh(positions: &[(Vec2, f32)], size: Vec2) -> Mesh {
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList);
     mesh.set_indices(Some(indices));
     mesh.insert_attribute(ATTRIBUTE_BULLET_POSITION, positions);
+    mesh
+}
+
+fn make_empty_mesh() -> Mesh {
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList);
+    mesh.insert_attribute(ATTRIBUTE_BULLET_POSITION, Vec::<Vec2>::new());
+    mesh.set_indices(None);
     mesh
 }
 
