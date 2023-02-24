@@ -11,7 +11,7 @@ use crate::{
 
 use self::{
     pattern::{Pattern, PatternDatabase, PatternLoader},
-    render::BulletRenderPlugin,
+    render::BulletPipelinePlugin,
 };
 
 const PLAYER_RADIUS: f32 = 5.;
@@ -22,18 +22,19 @@ pub struct BulletPlugin;
 impl Plugin for BulletPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PatternDatabase>()
-            .add_plugin(BulletRenderPlugin)
+            // .add_plugin(BulletRenderPlugin)
+            .add_plugin(BulletPipelinePlugin)
             .add_asset::<Pattern>()
             .add_startup_system(PatternLoader::init_database)
+            .add_startup_system(BulletPool::create_pool_temp)
             .init_asset_loader::<PatternLoader>()
-            .init_resource::<BulletPool>()
             .add_system(BulletPool::tick_bullets)
             .add_system(spawn_bullets.with_run_criteria(is_ui_unfocused));
     }
 }
 
 fn spawn_bullets(
-    bullet_container: ResMut<BulletPool>,
+    bullet_pools: Query<&mut BulletPool>,
     patterns: Res<Assets<Pattern>>,
     pattern_db: Res<PatternDatabase>,
     editor_state: Res<EditorState>,
@@ -45,11 +46,11 @@ fn spawn_bullets(
 
     let pattern = patterns.get(&pattern_db.get(&editor_state.selected_pattern).unwrap());
     if let Some(pattern) = pattern {
-        pattern.fire(bullet_container);
+        pattern.fire(bullet_pools);
     }
 }
 
-#[derive(Resource, Clone)]
+#[derive(Component, Clone)]
 pub struct BulletPool {
     ages: Vec<f32>,
     lifetimes: Vec<f32>,
@@ -81,7 +82,7 @@ impl BulletPool {
         self.pool_count += !is_replacing as usize;
     }
 
-    fn tick(&mut self, time: Res<Time>) {
+    fn tick(&mut self, time: &Res<Time>) {
         let delta_time = time.delta_seconds();
 
         let to_remove: Vec<usize> = (
@@ -131,13 +132,19 @@ impl BulletPool {
         self.remove_many(to_remove);
     }
 
+    fn create_pool_temp(mut commands: Commands) {
+        commands.spawn(BulletPool::default());
+    }
+
     fn tick_bullets(
-        mut container: ResMut<BulletPool>,
+        mut bullet_pools: Query<&mut BulletPool>,
         player_query: Query<&Transform, With<Player>>,
         time: Res<Time>,
     ) {
-        container.tick(time);
-        container.check_collisions(player_query.single());
+        for mut bullet_pool in bullet_pools.iter_mut() {
+            bullet_pool.tick(&time);
+            bullet_pool.check_collisions(player_query.single());
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -150,6 +157,7 @@ impl BulletPool {
         }
 
         self.ages[i] = -1.0;
+        self.positions[i].x = f32::MAX;
         self.pool_count -= 1;
     }
 

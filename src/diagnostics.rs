@@ -30,7 +30,7 @@ pub struct Framerate {
 }
 
 fn update(
-    bullet_container: ResMut<BulletPool>,
+    bullet_pools: Query<&BulletPool>,
     framerate: Res<Framerate>,
     mut ctx: ResMut<EguiContext>,
 ) {
@@ -42,7 +42,7 @@ fn update(
                 "FPS: {:.0} (min {:.0})",
                 framerate.average, framerate.min
             ));
-            ui.label(format!("Bullets: {:.0}", bullet_container.len()));
+            ui.label(format!("Bullets: {:.0}", bullet_pools.iter().map(|p| p.len()).sum::<usize>()));
         });
 }
 

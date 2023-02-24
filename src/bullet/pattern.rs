@@ -154,7 +154,7 @@ impl Pattern {
             .collect()
     }
 
-    pub fn fire(&self, mut bullet_container: ResMut<BulletPool>) {
+    pub fn fire(&self, mut bullet_pools: Query<&mut BulletPool>) {
         let mut bullets = vec![BulletContext::new(60.)];
 
         for op in self.operations.iter() {
@@ -167,7 +167,7 @@ impl Pattern {
                 PatternOp::Arc(count, angle) => Pattern::arc(bullets, *count, *angle),
                 PatternOp::Bullet(bullet) => {
                     bullets.iter().for_each(|iter_bullet| {
-                        bullet_container.add(
+                        bullet_pools.single_mut().add(
                             bullet.lifetime,
                             iter_bullet.position,
                             iter_bullet.rotation,
