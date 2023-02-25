@@ -1,21 +1,13 @@
 {
-    "type": "ring",
-    "count": "3",
-    "radius": "$ring_radius",
-    "params": {
-        "ring_radius": "sin(t)"
-    },
+    "type": "arc",
+    "count": 3000,
+    "angle": 30,
     "child": {
-        "type": "arc",
-        "count": 50,
-        "angle": 60,
-        "child": {
-            "type": "bullet",
-            "id": "rice_pellet01",
-            "speed": "t * 10 + 200",
-            "angular_velocity": "t - 4",
-            "lifetime": 6.28
-        }
+        "type": "bullet",
+        "id": "SA_bullet",
+        "speed": "t * 30 - 30",
+        "angular_velocity": 0,
+        "lifetime": 6.28
     },
     "_comment": [
         "Temporarily, all expressions are evaluated with t=0 during creation",

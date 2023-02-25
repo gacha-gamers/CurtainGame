@@ -13,7 +13,7 @@ use bevy::{
 use fasteval::*;
 use serde_json::Value;
 
-use super::BulletPool;
+use super::{BulletModifier, BulletPool};
 
 #[derive(Default)]
 pub struct PatternLoader;
@@ -75,6 +75,7 @@ pub struct BulletContext {
     rotation: f32,
     angular_velocity: Arc<ExpressionSlab>,
     speed: Arc<ExpressionSlab>,
+    id: String,
 }
 
 impl Default for BulletContext {
@@ -91,6 +92,7 @@ impl Default for BulletContext {
             )),
             position: Vec2::default(),
             rotation: f32::default(),
+            id: "bullet".into(),
         }
     }
 }
@@ -154,7 +156,13 @@ impl Pattern {
             .collect()
     }
 
-    pub fn fire(&self, mut bullet_pools: Query<&mut BulletPool>) {
+    pub fn fire(
+        &self,
+        mut commands: Commands,
+        asset_server: Res<AssetServer>,
+        // mut pool_query: Query<&mut BulletPool>,
+        // mut bullet_pools: ResMut<BulletPools>,
+    ) {
         let mut bullets = vec![BulletContext::new(60.)];
 
         for op in self.operations.iter() {
@@ -166,8 +174,27 @@ impl Pattern {
                 ),
                 PatternOp::Arc(count, angle) => Pattern::arc(bullets, *count, *angle),
                 PatternOp::Bullet(bullet) => {
+                    /* et mut bullet_pool = if !bullet_pools.0.contains_key(&bullet.id) {
+
+                        // BulletPool::create_pool(&mut commands, &asset_server, &bullet.id);
+                        bullet_pools
+                            .0
+                            .insert(bullet.id.clone(), commands.spawn(bullet_pool).id());
+                        &mut bullet_pool
+                    } else {
+                        pool_query
+                            .get_mut(*bullet_pools.0.get(&bullet.id).unwrap())
+                            .unwrap()
+                            .as_mut()
+                    }; */
+
+                    let mut bullet_pool = BulletPool::new(
+                        bullets.len(),
+                        asset_server.load(format!("bullets\\{}.png", bullet.id)),
+                    );
+
                     bullets.iter().for_each(|iter_bullet| {
-                        bullet_pools.single_mut().add(
+                        bullet_pool.add(
                             bullet.lifetime,
                             iter_bullet.position,
                             iter_bullet.rotation,
@@ -181,6 +208,31 @@ impl Pattern {
                                 .eval(&mut StrToF64Namespace::from([("t", 0.0)])),
                         );
                     });
+
+                    match bullet.speed.expression {
+                        IConst(_) => {}
+                        _ => {
+                            bullet_pool.add_modifier(BulletModifier {
+                                range: 0..bullets.len(),
+                                expression: bullet.speed.clone(),
+                                property: super::ModifierProperty::Speed,
+                            });
+                        }
+                    }
+
+                    match bullet.angular_velocity.expression {
+                        IConst(_) => {}
+                        _ => {
+                            bullet_pool.add_modifier(BulletModifier {
+                                range: 0..bullets.len(),
+                                expression: bullet.angular_velocity.clone(),
+                                property: super::ModifierProperty::Angular,
+                            });
+                        }
+                    }
+
+                    commands.spawn(bullet_pool);
+
                     bullets
                 }
             }
@@ -220,6 +272,7 @@ pub fn parse(source: &str) -> Pattern {
                     lifetime: value["lifetime"].as_f64().unwrap_or(10.) as f32,
                     speed: Arc::new(parse_expression(&value, "speed")),
                     angular_velocity: Arc::new(parse_expression(&value, "angular_velocity")),
+                    id: value["id"].as_str().expect("No count provided.").into(),
                     ..Default::default()
                 }),
                 _ => {

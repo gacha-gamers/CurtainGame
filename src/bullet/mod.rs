@@ -1,7 +1,10 @@
 pub mod pattern;
 mod render;
 
+use std::{collections::BTreeMap, ops::Range, sync::Arc};
+
 use bevy::prelude::*;
+use fasteval::StrToF64Namespace;
 use rayon::prelude::*;
 
 use crate::{
@@ -10,7 +13,7 @@ use crate::{
 };
 
 use self::{
-    pattern::{Pattern, PatternDatabase, PatternLoader},
+    pattern::{ExpressionSlab, Pattern, PatternDatabase, PatternLoader},
     render::BulletPipelinePlugin,
 };
 
@@ -26,16 +29,21 @@ impl Plugin for BulletPlugin {
             .add_plugin(BulletPipelinePlugin)
             .add_asset::<Pattern>()
             .add_startup_system(PatternLoader::init_database)
-            .add_startup_system(BulletPool::create_pool_temp)
+            // .add_startup_system(BulletPool::create_pool)
             .init_asset_loader::<PatternLoader>()
-            .add_system(BulletPool::tick_bullets)
+            .init_resource::<BulletPools>()
+            .add_system(BulletPool::tick_pools)
+            .add_system(BulletPool::free_pools)
             .add_system(spawn_bullets.with_run_criteria(is_ui_unfocused));
     }
 }
 
 fn spawn_bullets(
-    bullet_pools: Query<&mut BulletPool>,
+    commands: Commands,
+    asset_server: Res<AssetServer>,
     patterns: Res<Assets<Pattern>>,
+    // query_pool: Query<&mut BulletPool>,
+    // bullet_pools: ResMut<BulletPools>,
     pattern_db: Res<PatternDatabase>,
     editor_state: Res<EditorState>,
     input: Res<Input<KeyCode>>,
@@ -46,7 +54,7 @@ fn spawn_bullets(
 
     let pattern = patterns.get(&pattern_db.get(&editor_state.selected_pattern).unwrap());
     if let Some(pattern) = pattern {
-        pattern.fire(bullet_pools);
+        pattern.fire(commands, asset_server /* , query_pool, bullet_pools */);
     }
 }
 
@@ -59,15 +67,37 @@ pub struct BulletPool {
     speeds: Vec<f32>,
     angulars: Vec<f32>,
 
-    pool_index: usize,
-    pool_count: usize,
+    modifiers: Vec<BulletModifier>,
+    handle: Handle<Image>,
+    index: usize,
+    count: usize,
+    capacity: usize,
 }
 
 impl BulletPool {
-    const POOL_CAPACITY: usize = 100_000;
+    fn new(capacity: usize, handle: Handle<Image>) -> Self {
+        Self {
+            ages: vec![-1.; capacity],
+            lifetimes: vec![0.0; capacity],
+            positions: vec![Vec2::ONE * 100000000.; capacity],
+            rotations: vec![0.; capacity],
+            speeds: vec![0.; capacity],
+            angulars: vec![0.; capacity],
+
+            modifiers: Default::default(),
+            index: 0,
+            count: 0,
+            capacity,
+            handle,
+        }
+    }
+
+    pub fn add_modifier(&mut self, modifier: BulletModifier) {
+        self.modifiers.push(modifier);
+    }
 
     pub fn add(&mut self, lifetime: f32, position: Vec2, rotation: f32, speed: f32, angular: f32) {
-        let i = self.pool_index;
+        let i = self.index;
         // If the previous bullet at this index was alive, this is a replacement
         let is_replacing = Self::is_alive(self.ages[i]);
 
@@ -78,8 +108,8 @@ impl BulletPool {
         self.speeds[i] = speed;
         self.angulars[i] = angular;
 
-        self.pool_index = (self.pool_index + 1) % BulletPool::POOL_CAPACITY;
-        self.pool_count += !is_replacing as usize;
+        self.index = (self.index + 1) % self.capacity;
+        self.count += !is_replacing as usize;
     }
 
     fn tick(&mut self, time: &Res<Time>) {
@@ -132,23 +162,46 @@ impl BulletPool {
         self.remove_many(to_remove);
     }
 
-    fn create_pool_temp(mut commands: Commands) {
-        commands.spawn(BulletPool::default());
+    fn tick_modifiers(&mut self) {
+        if self.ages.len() == 0 {
+            return;
+        }
+
+        let mut params = StrToF64Namespace::new();
+        params.insert("t", self.ages[0] as f64);
+
+        for modifier in self.modifiers.iter() {
+            let value =  modifier.expression.eval(&mut params);
+            for i in modifier.range.clone() {
+                match modifier.property {
+                    ModifierProperty::Speed => self.speeds[i] = value,
+                    ModifierProperty::Angular => self.angulars[i] = value,
+                }
+            }
+        }
     }
 
-    fn tick_bullets(
-        mut bullet_pools: Query<&mut BulletPool>,
+    fn tick_pools(
+        mut pool_query: Query<&mut BulletPool>,
         player_query: Query<&Transform, With<Player>>,
         time: Res<Time>,
     ) {
-        for mut bullet_pool in bullet_pools.iter_mut() {
+        pool_query.par_for_each_mut(4, |mut bullet_pool| {
             bullet_pool.tick(&time);
             bullet_pool.check_collisions(player_query.single());
+
+            bullet_pool.tick_modifiers();
+        });
+    }
+
+    fn free_pools(mut commands: Commands, pool_query: Query<(Entity, &BulletPool)>) {
+        for (entity, _) in pool_query.iter().filter(|(_, pool)| pool.count == 0) {
+            commands.entity(entity).despawn();
         }
     }
 
     pub fn len(&self) -> usize {
-        self.pool_count
+        self.count
     }
 
     fn remove(&mut self, i: usize) {
@@ -158,7 +211,7 @@ impl BulletPool {
 
         self.ages[i] = -1.0;
         self.positions[i].x = f32::MAX;
-        self.pool_count -= 1;
+        self.count -= 1;
     }
 
     fn remove_many(&mut self, mut indices: Vec<usize>) {
@@ -175,17 +228,18 @@ impl BulletPool {
     }
 }
 
-impl Default for BulletPool {
-    fn default() -> Self {
-        Self {
-            ages: vec![-1.; BulletPool::POOL_CAPACITY],
-            lifetimes: vec![0.0; BulletPool::POOL_CAPACITY],
-            positions: vec![Vec2::ONE * 100000000.; BulletPool::POOL_CAPACITY],
-            rotations: vec![0.; BulletPool::POOL_CAPACITY],
-            speeds: vec![0.; BulletPool::POOL_CAPACITY],
-            angulars: vec![0.; BulletPool::POOL_CAPACITY],
-            pool_index: 0,
-            pool_count: 0,
-        }
-    }
+#[derive(Resource, Default)]
+pub struct BulletPools(BTreeMap<String, Entity>);
+
+#[derive(Clone)]
+pub struct BulletModifier {
+    range: Range<usize>,
+    expression: Arc<ExpressionSlab>,
+    property: ModifierProperty,
+}
+
+#[derive(Clone)]
+enum ModifierProperty {
+    Speed,
+    Angular,
 }

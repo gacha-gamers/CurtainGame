@@ -6,16 +6,8 @@
 @group(0) @binding(0)
 var<uniform> view: View;
 
-struct PositionBuffer {
-    data: array<vec4<f32>>
-};
 @group(1) @binding(0)
-var<storage, read> positions: PositionBuffer;
-struct RotationBuffer {
-    data: array<vec2<f32>>
-};
-@group(1) @binding(1)
-var<storage, read> rotations: RotationBuffer;
+var<storage, read> positions: array<vec3<f32>>;
 
 @group(2) @binding(0)
 var bullet_texture: texture_2d<f32>;
@@ -50,16 +42,15 @@ fn vertex(@builtin(vertex_index) in_vertex_index: u32) -> VertexOutput {
     let bullet_id = in_vertex_index / 6u;
     let vertex_id = in_vertex_index % 6u;
 
-    let bullet_pos = positions.data[bullet_id].xy;
-    let bullet_rot = rotations.data[bullet_id].x;
+    let bullet_pos = positions[bullet_id].xy;
+    let bullet_rot = positions[bullet_id].z;
 
     let cos_sin = vec2<f32>(cos(bullet_rot), sin(bullet_rot));
     let rot_matrix = mat2x2<f32>(
         cos_sin.y, cos_sin.x, 
         -cos_sin.x, cos_sin.y);
     
-    var vertex_pos = vertex_positions[vertex_id];
-    vertex_pos = vertex_pos * rot_matrix * 16.0;
+    let vertex_pos = vertex_positions[vertex_id] * rot_matrix * 16.0;
 
     var out: VertexOutput;
     // Calculate the UV from the pattern [[0,0], [1,0], [0,1], [1,1]]
@@ -68,11 +59,6 @@ fn vertex(@builtin(vertex_index) in_vertex_index: u32) -> VertexOutput {
     out.position = view.view_proj * vec4<f32>(bullet_pos + vertex_pos, 0.0, 1.0);
     return out;
 }
-
-// @group(2) @binding(0)
-// var texture: texture_2d<f32>;
-// @group(2) @binding(1)
-// var texture_sampler: sampler;
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {

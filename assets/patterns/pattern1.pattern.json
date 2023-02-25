@@ -7,7 +7,7 @@
         "angle": 30,
         "child": {
             "type": "bullet",
-            "id": "rice_pellet01",
+            "id": "SA_bullet",
             "lifetime": 15,
             "speed": 60,
             "angular_velocity": 0

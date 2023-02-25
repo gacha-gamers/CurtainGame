@@ -1,7 +1,8 @@
 #![allow(unused_imports)]
-use std::num::NonZeroU64;
+use std::{num::NonZeroU64, ops::Range};
 
 use bevy::{
+    asset::HandleId,
     core::Pod,
     core_pipeline::core_2d::Transparent2d,
     ecs::system::{
@@ -98,7 +99,7 @@ impl FromWorld for BulletPipeline {
                         ),
                     },
                     count: None,
-                },
+                }/* ,
                 BindGroupLayoutEntry {
                     binding: 1,
                     visibility: ShaderStages::VERTEX,
@@ -106,11 +107,11 @@ impl FromWorld for BulletPipeline {
                         ty: BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: Some(
-                            NonZeroU64::new(std::mem::size_of::<Vec2>() as u64).unwrap(),
+                            NonZeroU64::new(std::mem::size_of::<f32>() as u64).unwrap(),
                         ),
                     },
                     count: None,
-                },
+                }, */
             ],
             label: Some("bullet_layout"),
         });
@@ -209,6 +210,8 @@ struct ExtractedBulletPools {
 struct ExtractedBulletPool {
     positions: Vec<Vec2>,
     rotations: Vec<f32>,
+
+    handle: Handle<Image>,
 }
 
 fn extract_bullets(
@@ -221,6 +224,7 @@ fn extract_bullets(
         extracted_pools.pools.push(ExtractedBulletPool {
             positions: p.positions.clone(),
             rotations: p.rotations.clone(),
+            handle: p.handle.clone(),
         })
     });
 }
@@ -228,26 +232,27 @@ fn extract_bullets(
 #[derive(Component, Default)]
 struct BulletBatch {
     handle: Handle<Image>,
+    range: Range<u32>,
 }
 
 #[derive(Resource)]
 pub struct BulletMeta {
     view_bind_group: Option<BindGroup>,
-    bullet_data_bind_group: Option<BindGroup>,
+    bullet_states_bind_group: Option<BindGroup>,
     material_bind_groups: HashMap<Handle<Image>, BindGroup>,
 
     positions: BufferVec<Vec4>,
-    rotations: BufferVec<Vec2>,
+    // rotations: BufferVec<f32>,
 }
 
 impl Default for BulletMeta {
     fn default() -> Self {
         Self {
             positions: BufferVec::new(BufferUsages::STORAGE),
-            rotations: BufferVec::new(BufferUsages::STORAGE),
+            // rotations: BufferVec::new(BufferUsages::STORAGE),
             material_bind_groups: Default::default(),
             view_bind_group: Default::default(),
-            bullet_data_bind_group: Default::default(),
+            bullet_states_bind_group: Default::default(),
         }
     }
 }
@@ -256,18 +261,30 @@ fn prepare_bullets(
     mut commands: Commands,
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
-    asset_server: Res<AssetServer>,
     mut bullet_meta: ResMut<BulletMeta>,
-    extracted_pools: Res<ExtractedBulletPools>,
+    mut extracted_pools: ResMut<ExtractedBulletPools>,
 ) {
     let BulletMeta {
         positions,
-        rotations,
+        // rotations,
         ..
     }: &mut BulletMeta = bullet_meta.as_mut();
 
+    fn spawn_bullet_batch(commands: &mut Commands, handle: &Handle<Image>, range: &Range<u32>) {
+        commands.spawn(BulletBatch {
+            handle: handle.clone_weak(),
+            range: range.clone(),
+        });
+    }
+
+    let span = info_span!("buffer_clear_and_setup").entered();
+
     positions.clear();
-    rotations.clear();
+    // rotations.clear();
+
+    extracted_pools
+        .pools
+        .sort_by(|a, b| a.handle.cmp(&b.handle));
 
     let total = extracted_pools
         .pools
@@ -276,31 +293,42 @@ fn prepare_bullets(
         .sum::<usize>();
 
     positions.reserve(total, &render_device);
-    rotations.reserve(total, &render_device);
+    // rotations.reserve(total, &render_device);
+
+    span.exit();
+
+    let mut range = 0..0u32;
+    let mut handle: Option<Handle<Image>> = None;
 
     for pool in extracted_pools.pools.iter() {
-        pool.positions.iter().for_each(|p| {
-            positions.push(p.extend(0.).extend(0.));
+        if let Some(handle) = &handle {
+            if *handle != pool.handle {
+                spawn_bullet_batch(&mut commands, handle, &range);
+                range.start = range.end;
+            }
+        }
+
+        let _span = info_span!("buffer_move").entered();
+
+        pool.positions.iter().zip(pool.rotations.iter()).for_each(|(p, r)| {
+            positions.push(p.extend(*r).extend(0.));
         });
-        pool.rotations.iter().for_each(|r| {
-            rotations.push(Vec2::new(*r, 0.));
-        });
+/*         pool.rotations.iter().for_each(|r| {
+            rotations.push(*r);
+        }); */
+        range.end += pool.positions.len() as u32 * 6;
+        handle = Some(pool.handle.clone_weak());
     }
 
-    commands.spawn(BulletBatch {
-        handle: asset_server.load("SA_bullet.png"),
-    });
+    if !range.is_empty() {
+        spawn_bullet_batch(&mut commands, &handle.unwrap(), &range);
+    }
+
+    let _span = info_span!("buffer_write").entered();
 
     positions.write_buffer(&render_device, &render_queue);
-    rotations.write_buffer(&render_device, &render_queue);
+    // rotations.write_buffer(&render_device, &render_queue);
 }
-
-/* there's so much left to do.
-please do it!
-rendering bullets ain't easy, but just bear with It...
-
-james7132 gave you plenty of advice. you have multiple repos and examples to take inspiration from.
-you can do this! */
 
 fn bind_buffer<T: Pod>(buffer: &BufferVec<T>, count: u64) -> BindingResource {
     BindingResource::Buffer(BufferBinding {
@@ -324,194 +352,128 @@ fn queue_bullets(
     bullet_batches: Query<(Entity, &BulletBatch)>,
     mut views: Query<&mut RenderPhase<Transparent2d>>,
 ) {
-    if let Some(view_binding) = view_uniforms.uniforms.binding() {
-        bullet_meta.view_bind_group = Some(render_device.create_bind_group(&BindGroupDescriptor {
-            label: Some("bullet_view_bind_group".into()),
-            layout: &pipeline.view_layout,
-            entries: &[BindGroupEntry {
-                binding: 0,
-                resource: view_binding,
-            }],
+    let Some(view_binding) = view_uniforms.uniforms.binding() else { return };
+    if bullet_meta.positions.is_empty() {
+        return;
+    };
+
+    bullet_meta.view_bind_group = Some(render_device.create_bind_group(&BindGroupDescriptor {
+        label: Some("bullet_view_bind_group".into()),
+        layout: &pipeline.view_layout,
+        entries: &[BindGroupEntry {
+            binding: 0,
+            resource: view_binding,
+        }],
+    }));
+
+    let draw_bullet = transparent_draw_functions
+        .read()
+        .get_id::<DrawBullet>()
+        .unwrap();
+
+    bullet_meta.bullet_states_bind_group =
+        Some(render_device.create_bind_group(&BindGroupDescriptor {
+            label: Some("bullet_states_bind_group".into()),
+            layout: &pipeline.bullet_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: bind_buffer(
+                        &bullet_meta.positions,
+                        bullet_meta.positions.len() as u64,
+                    ),
+                }/* ,
+                BindGroupEntry {
+                    binding: 1,
+                    resource: bind_buffer(
+                        &bullet_meta.rotations,
+                        bullet_meta.positions.len() as u64,
+                    ),
+                }, */
+            ],
         }));
 
-        let draw_bullet = transparent_draw_functions
-            .read()
-            .get_id::<DrawBullet>()
-            .unwrap();
+    // Iterate each view (a camera is a view)
+    for mut transparent_phase in views.iter_mut() {
+        // Queue all entities visible to that view
+        for (entity, batch) in bullet_batches.iter() {
+            if !bullet_meta.material_bind_groups.contains_key(&batch.handle) {
+                // Ignore batches whose image hasn't loaded yet
+                let Some(gpu_image) = gpu_images.get(&batch.handle) else { continue };
 
-        bullet_meta.bullet_data_bind_group =
-            Some(render_device.create_bind_group(&BindGroupDescriptor {
-                label: Some("bullet_data_bind_group".into()),
-                layout: &pipeline.bullet_layout,
-                entries: &[
-                    BindGroupEntry {
-                        binding: 0,
-                        resource: bind_buffer(
-                            &bullet_meta.positions,
-                            bullet_meta.positions.len() as u64,
-                        ),
-                    },
-                    BindGroupEntry {
-                        binding: 1,
-                        resource: bind_buffer(
-                            &bullet_meta.rotations,
-                            bullet_meta.positions.len() as u64,
-                        ),
-                    },
-                ],
-            }));
-
-        // Iterate each view (a camera is a view)
-        for mut transparent_phase in views.iter_mut() {
-            // Queue all entities visible to that view
-            for (entity, batch) in bullet_batches.iter() {
-                if !bullet_meta.material_bind_groups.contains_key(&batch.handle) {
-                    if let Some(gpu_image) = gpu_images.get(&batch.handle) {
-                        bullet_meta.material_bind_groups.insert(
-                            batch.handle.clone_weak(),
-                            render_device.create_bind_group(&BindGroupDescriptor {
-                                label: Some("bullet_material_bind_group".into()),
-                                layout: &pipeline.material_layout,
-                                entries: &[
-                                    BindGroupEntry {
-                                        binding: 0,
-                                        resource: BindingResource::TextureView(
-                                            &gpu_image.texture_view,
-                                        ),
-                                    },
-                                    BindGroupEntry {
-                                        binding: 1,
-                                        resource: BindingResource::Sampler(&gpu_image.sampler),
-                                    },
-                                ],
-                            }),
-                        );
-                    } else {
-                        continue;
-                    }
-                }
-
-                transparent_phase.add(Transparent2d {
-                    entity,
-                    draw_function: draw_bullet,
-                    pipeline: pipelines.specialize(
-                        &mut pipeline_cache,
-                        &pipeline,
-                        BulletPipelineKey,
-                    ),
-                    sort_key: FloatOrd(0.),
-                    // This material is not batched
-                    batch_range: None,
-                });
+                bullet_meta.material_bind_groups.insert(
+                    batch.handle.clone_weak(),
+                    render_device.create_bind_group(&BindGroupDescriptor {
+                        label: Some("bullet_material_bind_group".into()),
+                        layout: &pipeline.material_layout,
+                        entries: &[
+                            BindGroupEntry {
+                                binding: 0,
+                                resource: BindingResource::TextureView(&gpu_image.texture_view),
+                            },
+                            BindGroupEntry {
+                                binding: 1,
+                                resource: BindingResource::Sampler(&gpu_image.sampler),
+                            },
+                        ],
+                    }),
+                );
             }
+
+            transparent_phase.add(Transparent2d {
+                entity,
+                draw_function: draw_bullet,
+                pipeline: pipelines.specialize(&mut pipeline_cache, &pipeline, BulletPipelineKey),
+                sort_key: FloatOrd(0.),
+                // This material is not batched
+                batch_range: Some(batch.range.clone()),
+            });
         }
     }
 }
 
 type DrawBullet = (
     SetItemPipeline,
-    SetBulletViewBindGroup<0>,
-    SetBulletDataBindGroup<1>,
-    SetBulletMaterialBindGroup<2>,
-    DrawBulletBatchCmd,
+    DrawBulletBatch,
 );
 
-/* struct DrawBulletBatch {
-    params: SystemState<()>
-}
-
-impl Draw<Transparent2d> for DrawBulletBatch {
-    fn draw<'w>(
-        &mut self,
-        world: &'w World,
-        pass: &mut TrackedRenderPass<'w>,
-        view: Entity,
-        item: &Transparent2d,
-    ) {
-
-    }
-} */
-
-pub struct SetBulletViewBindGroup<const I: usize>;
-impl<const I: usize> EntityRenderCommand for SetBulletViewBindGroup<I> {
-    type Param = (SRes<BulletMeta>, SQuery<Read<ViewUniformOffset>>);
-
-    fn render<'w>(
-        view: Entity,
-        _item: Entity,
-        (bullet_meta, view_query): SystemParamItem<'w, '_, Self::Param>,
-        pass: &mut TrackedRenderPass<'w>,
-    ) -> RenderCommandResult {
-        let view_uniform = view_query.get(view).unwrap();
-        pass.set_bind_group(
-            I,
-            bullet_meta.into_inner().view_bind_group.as_ref().unwrap(),
-            &[view_uniform.offset],
-        );
-        RenderCommandResult::Success
-    }
-}
-
-struct SetBulletDataBindGroup<const I: usize>;
-impl<const I: usize> EntityRenderCommand for SetBulletDataBindGroup<I> {
-    type Param = SRes<BulletMeta>;
-
-    fn render<'w>(
-        _view: Entity,
-        _item: Entity,
-        bullet_meta: SystemParamItem<'w, '_, Self::Param>,
-        pass: &mut TrackedRenderPass<'w>,
-    ) -> RenderCommandResult {
-        pass.set_bind_group(
-            I,
-            bullet_meta
-                .into_inner()
-                .bullet_data_bind_group
-                .as_ref()
-                .unwrap(),
-            &[],
-        );
-        RenderCommandResult::Success
-    }
-}
-
-struct SetBulletMaterialBindGroup<const I: usize>;
-impl<const I: usize> EntityRenderCommand for SetBulletMaterialBindGroup<I> {
-    type Param = (SRes<BulletMeta>, SQuery<Read<BulletBatch>>);
-
-    fn render<'w>(
-        _view: Entity,
-        item: Entity,
-        (bullet_meta, query_batch): SystemParamItem<'w, '_, Self::Param>,
-        pass: &mut TrackedRenderPass<'w>,
-    ) -> RenderCommandResult {
-        let batch = query_batch.get(item).unwrap();
-        pass.set_bind_group(
-            I,
-            bullet_meta
-                .into_inner()
-                .material_bind_groups
-                .get(&batch.handle)
-                .unwrap(),
-            &[],
-        );
-        RenderCommandResult::Success
-    }
-}
-
-struct DrawBulletBatchCmd;
-impl EntityRenderCommand for DrawBulletBatchCmd {
-    type Param = (SRes<BulletMeta>, SQuery<Read<BulletBatch>>);
+struct DrawBulletBatch;
+impl EntityRenderCommand for DrawBulletBatch {
+    type Param = (
+        SRes<BulletMeta>,
+        SQuery<Read<ViewUniformOffset>>,
+        SQuery<Read<BulletBatch>>,
+    );
     #[inline]
     fn render<'w>(
-        _view: Entity,
+        view: Entity,
         item: Entity,
-        (bullet_meta, bullet_batch_query): SystemParamItem<'w, '_, Self::Param>,
+        (bullet_meta, view_query, bullet_batch_query): SystemParamItem<'w, '_, Self::Param>,
         pass: &mut TrackedRenderPass<'w>,
     ) -> RenderCommandResult {
-        let _batch = bullet_batch_query.get(item).unwrap();
+        let batch = bullet_batch_query.get(item).unwrap();
+        let view_uniform = view_query.get(view).unwrap();
+        let bullet_meta = bullet_meta.into_inner();
 
-        pass.draw(0..bullet_meta.positions.len() as u32 * 6, 0..1);
+        pass.set_bind_group(
+            0,
+            bullet_meta.view_bind_group.as_ref().unwrap(),
+            &[view_uniform.offset],
+        );
+
+        pass.set_bind_group(
+            1,
+            bullet_meta.bullet_states_bind_group.as_ref().unwrap(),
+            &[],
+        );
+
+        pass.set_bind_group(
+            2,
+            bullet_meta.material_bind_groups.get(&batch.handle).unwrap(),
+            &[],
+        );
+
+        pass.draw(batch.range.clone(), 0..1);
 
         RenderCommandResult::Success
         /* if let Some(gpu_mesh) = bullet_meta.into_inner().get(mesh_handle) {
