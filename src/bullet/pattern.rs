@@ -190,22 +190,25 @@ impl Pattern {
 
                     let mut bullet_pool = BulletPool::new(
                         bullets.len(),
+                        bullet.lifetime,
                         asset_server.load(format!("bullets\\{}.png", bullet.id)),
                     );
 
+                    let default_speed = bullet
+                        .speed
+                        .clone()
+                        .eval(&mut StrToF64Namespace::from([("t", 0.0)]));
+                    let default_angular = bullet
+                        .angular_velocity
+                        .clone()
+                        .eval(&mut StrToF64Namespace::from([("t", 0.0)]));
+
                     bullets.iter().for_each(|iter_bullet| {
                         bullet_pool.add(
-                            bullet.lifetime,
                             iter_bullet.position,
                             iter_bullet.rotation,
-                            bullet
-                                .speed
-                                .clone()
-                                .eval(&mut StrToF64Namespace::from([("t", 0.0)])),
-                            bullet
-                                .angular_velocity
-                                .clone()
-                                .eval(&mut StrToF64Namespace::from([("t", 0.0)])),
+                            default_speed,
+                            default_angular,
                         );
                     });
 

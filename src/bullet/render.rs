@@ -1,5 +1,5 @@
 #![allow(unused_imports)]
-use std::{num::NonZeroU64, ops::Range};
+use std::{arch::x86_64::__m128, num::NonZeroU64, ops::Range};
 
 use bevy::{
     asset::HandleId,
@@ -9,6 +9,7 @@ use bevy::{
         lifetimeless::{Read, SQuery, SRes},
         SystemParamItem, SystemState,
     },
+    math::{Vec3A, Vec3Swizzles},
     prelude::*,
     reflect::TypeUuid,
     render::{
@@ -99,19 +100,19 @@ impl FromWorld for BulletPipeline {
                         ),
                     },
                     count: None,
-                }/* ,
-                BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: ShaderStages::VERTEX,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: Some(
-                            NonZeroU64::new(std::mem::size_of::<f32>() as u64).unwrap(),
-                        ),
-                    },
-                    count: None,
-                }, */
+                }, /* ,
+                   BindGroupLayoutEntry {
+                       binding: 1,
+                       visibility: ShaderStages::VERTEX,
+                       ty: BindingType::Buffer {
+                           ty: BufferBindingType::Storage { read_only: true },
+                           has_dynamic_offset: false,
+                           min_binding_size: Some(
+                               NonZeroU64::new(std::mem::size_of::<f32>() as u64).unwrap(),
+                           ),
+                       },
+                       count: None,
+                   }, */
             ],
             label: Some("bullet_layout"),
         });
@@ -208,9 +209,7 @@ struct ExtractedBulletPools {
 }
 
 struct ExtractedBulletPool {
-    positions: Vec<Vec2>,
-    rotations: Vec<f32>,
-
+    states: Vec<Vec3A>,
     handle: Handle<Image>,
 }
 
@@ -222,8 +221,7 @@ fn extract_bullets(
 
     pools.iter().for_each(|p| {
         extracted_pools.pools.push(ExtractedBulletPool {
-            positions: p.positions.clone(),
-            rotations: p.rotations.clone(),
+            states: p.states.clone(),
             handle: p.handle.clone(),
         })
     });
@@ -241,15 +239,13 @@ pub struct BulletMeta {
     bullet_states_bind_group: Option<BindGroup>,
     material_bind_groups: HashMap<Handle<Image>, BindGroup>,
 
-    positions: BufferVec<Vec4>,
-    // rotations: BufferVec<f32>,
+    positions: BufferVec<__m128>,
 }
 
 impl Default for BulletMeta {
     fn default() -> Self {
         Self {
             positions: BufferVec::new(BufferUsages::STORAGE),
-            // rotations: BufferVec::new(BufferUsages::STORAGE),
             material_bind_groups: Default::default(),
             view_bind_group: Default::default(),
             bullet_states_bind_group: Default::default(),
@@ -264,11 +260,7 @@ fn prepare_bullets(
     mut bullet_meta: ResMut<BulletMeta>,
     mut extracted_pools: ResMut<ExtractedBulletPools>,
 ) {
-    let BulletMeta {
-        positions,
-        // rotations,
-        ..
-    }: &mut BulletMeta = bullet_meta.as_mut();
+    let BulletMeta { positions, .. }: &mut BulletMeta = bullet_meta.as_mut();
 
     fn spawn_bullet_batch(commands: &mut Commands, handle: &Handle<Image>, range: &Range<u32>) {
         commands.spawn(BulletBatch {
@@ -289,7 +281,7 @@ fn prepare_bullets(
     let total = extracted_pools
         .pools
         .iter()
-        .map(|a| a.positions.len())
+        .map(|a| a.states.len())
         .sum::<usize>();
 
     positions.reserve(total, &render_device);
@@ -310,13 +302,10 @@ fn prepare_bullets(
 
         let _span = info_span!("buffer_move").entered();
 
-        pool.positions.iter().zip(pool.rotations.iter()).for_each(|(p, r)| {
-            positions.push(p.extend(*r).extend(0.));
+        pool.states.iter().for_each(|s| {
+            positions.push(From::from(*s));
         });
-/*         pool.rotations.iter().for_each(|r| {
-            rotations.push(*r);
-        }); */
-        range.end += pool.positions.len() as u32 * 6;
+        range.end += pool.states.len() as u32 * 6;
         handle = Some(pool.handle.clone_weak());
     }
 
@@ -382,14 +371,14 @@ fn queue_bullets(
                         &bullet_meta.positions,
                         bullet_meta.positions.len() as u64,
                     ),
-                }/* ,
-                BindGroupEntry {
-                    binding: 1,
-                    resource: bind_buffer(
-                        &bullet_meta.rotations,
-                        bullet_meta.positions.len() as u64,
-                    ),
-                }, */
+                }, /* ,
+                   BindGroupEntry {
+                       binding: 1,
+                       resource: bind_buffer(
+                           &bullet_meta.rotations,
+                           bullet_meta.positions.len() as u64,
+                       ),
+                   }, */
             ],
         }));
 
@@ -432,10 +421,7 @@ fn queue_bullets(
     }
 }
 
-type DrawBullet = (
-    SetItemPipeline,
-    DrawBulletBatch,
-);
+type DrawBullet = (SetItemPipeline, DrawBulletBatch);
 
 struct DrawBulletBatch;
 impl EntityRenderCommand for DrawBulletBatch {

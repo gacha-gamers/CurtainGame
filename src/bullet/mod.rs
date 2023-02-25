@@ -3,7 +3,7 @@ mod render;
 
 use std::{collections::BTreeMap, ops::Range, sync::Arc};
 
-use bevy::prelude::*;
+use bevy::{math::Vec3A, prelude::*};
 use fasteval::StrToF64Namespace;
 use rayon::prelude::*;
 
@@ -60,35 +60,32 @@ fn spawn_bullets(
 
 #[derive(Component, Clone)]
 pub struct BulletPool {
-    ages: Vec<f32>,
-    lifetimes: Vec<f32>,
-    positions: Vec<Vec2>,
-    rotations: Vec<f32>,
+    states: Vec<Vec3A>,
     speeds: Vec<f32>,
     angulars: Vec<f32>,
 
     modifiers: Vec<BulletModifier>,
     handle: Handle<Image>,
     index: usize,
-    count: usize,
     capacity: usize,
+    lifetime: f32,
+    age: f32,
 }
 
 impl BulletPool {
-    fn new(capacity: usize, handle: Handle<Image>) -> Self {
+    fn new(capacity: usize, lifetime: f32, handle: Handle<Image>) -> Self {
         Self {
-            ages: vec![-1.; capacity],
-            lifetimes: vec![0.0; capacity],
-            positions: vec![Vec2::ONE * 100000000.; capacity],
-            rotations: vec![0.; capacity],
+            states: vec![Vec3A::new(f32::MAX, 0., 0.); capacity],
+            // velocities: vec![Vec4::ZERO; capacity],
             speeds: vec![0.; capacity],
             angulars: vec![0.; capacity],
 
             modifiers: Default::default(),
             index: 0,
-            count: 0,
+            age: 0.0,
             capacity,
             handle,
+            lifetime,
         }
     }
 
@@ -96,82 +93,46 @@ impl BulletPool {
         self.modifiers.push(modifier);
     }
 
-    pub fn add(&mut self, lifetime: f32, position: Vec2, rotation: f32, speed: f32, angular: f32) {
+    pub fn add(&mut self, position: Vec2, rotation: f32, speed: f32, angular: f32) {
         let i = self.index;
-        // If the previous bullet at this index was alive, this is a replacement
-        let is_replacing = Self::is_alive(self.ages[i]);
 
-        self.ages[i] = 0.;
-        self.lifetimes[i] = lifetime;
-        self.positions[i] = position;
-        self.rotations[i] = rotation;
+        self.states[i] = Vec3A::new(position.x, position.y, rotation);
         self.speeds[i] = speed;
         self.angulars[i] = angular;
 
         self.index = (self.index + 1) % self.capacity;
-        self.count += !is_replacing as usize;
     }
 
     fn tick(&mut self, time: &Res<Time>) {
         let delta_time = time.delta_seconds();
+        self.age += delta_time;
 
-        let to_remove: Vec<usize> = (
-            &mut self.ages,
-            &mut self.lifetimes,
-            &mut self.positions,
-            &mut self.rotations,
-            &self.speeds,
-            &self.angulars,
-        )
+        (&mut self.states, &self.speeds, &self.angulars)
             .into_par_iter()
-            .enumerate()
-            .filter_map(
-                |(index, (age, lifetime, position, rotation, speed, angular))| {
-                    if Self::is_alive(*age) {
-                        *position += Vec2::from_angle(*rotation) * *speed * delta_time;
-                        *rotation += *angular * delta_time;
-
-                        *age += delta_time;
-                        if *age > *lifetime {
-                            // Return this bullet's index so it can be removed
-                            return Some(index);
-                        }
-                    }
-
-                    None
-                },
-            )
-            .collect();
-
-        self.remove_many(to_remove);
+            .for_each(|(state, speed, angular)| {
+                *state +=
+                    Vec3A::from((Vec2::from_angle(state.z) * *speed).extend(*angular) * delta_time);
+            })
     }
 
     fn check_collisions(&mut self, player_tr: &Transform) {
-        let player_pos = player_tr.translation.truncate();
+        let player_pos = Vec3A::from(player_tr.translation);
 
-        let to_remove: Vec<usize> = self
-            .positions
-            .iter()
-            .enumerate()
-            .filter_map(|(index, bullet_pos)| {
-                // If the bullet is within reach of the player, return its index so it can be removed
-                (player_pos.distance_squared(*bullet_pos) < PLAYER_RADIUS_SQR).then_some(index)
-            })
-            .collect();
-
-        self.remove_many(to_remove);
+        for (i, bullet_pos) in self.states.iter().enumerate() {
+            if player_pos.distance_squared(*bullet_pos * Vec3A::new(1., 1., 0.)) < PLAYER_RADIUS_SQR
+            {
+                self.remove(i);
+                break;
+            }
+        }
     }
 
     fn tick_modifiers(&mut self) {
-        if self.ages.len() == 0 {
-            return;
-        }
-
         let mut params = StrToF64Namespace::new();
-        params.insert("t", self.ages[0] as f64);
+        params.insert("t", self.age as f64);
 
         for modifier in self.modifiers.iter() {
-            let value =  modifier.expression.eval(&mut params);
+            let value = modifier.expression.eval(&mut params);
             for i in modifier.range.clone() {
                 match modifier.property {
                     ModifierProperty::Speed => self.speeds[i] = value,
@@ -195,36 +156,20 @@ impl BulletPool {
     }
 
     fn free_pools(mut commands: Commands, pool_query: Query<(Entity, &BulletPool)>) {
-        for (entity, _) in pool_query.iter().filter(|(_, pool)| pool.count == 0) {
+        for (entity, _) in pool_query
+            .iter()
+            .filter(|(_, pool)| pool.age >= pool.lifetime)
+        {
             commands.entity(entity).despawn();
         }
     }
 
     pub fn len(&self) -> usize {
-        self.count
+        self.capacity
     }
 
     fn remove(&mut self, i: usize) {
-        if !Self::is_alive(self.ages[i]) {
-            return;
-        }
-
-        self.ages[i] = -1.0;
-        self.positions[i].x = f32::MAX;
-        self.count -= 1;
-    }
-
-    fn remove_many(&mut self, mut indices: Vec<usize>) {
-        indices.sort();
-        indices.reverse();
-        for r in indices {
-            self.remove(r);
-        }
-    }
-
-    /// Checks if a bullet is alive based on its age
-    fn is_alive(age: f32) -> bool {
-        age.is_sign_positive()
+        self.states[i].x = f32::MAX;
     }
 }
 
