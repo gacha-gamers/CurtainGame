@@ -191,7 +191,7 @@ impl Pattern {
                     let mut bullet_pool = BulletPool::new(
                         bullets.len(),
                         bullet.lifetime,
-                        asset_server.load(format!("bullets\\{}.png", bullet.id)),
+                        asset_server.load(format!("bullets/{}.png", bullet.id)),
                     );
 
                     let default_speed = bullet
